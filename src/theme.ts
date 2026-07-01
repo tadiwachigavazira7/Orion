@@ -4,14 +4,14 @@ export const colors = {
     border: 'black',
     text: 'black',
     subtext: '#999999',
-    card: '#C4C4C4',
+    card: '#dad9d9',
   },
   dark: {
     background: '#1a1a1a',
     border: 'white',
     text: 'white',
     subtext: '#aaaaaa',
-    card: '#333333',
+    card: '#dad9d9',
   }
 }
 
