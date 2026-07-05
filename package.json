@@ -8,7 +8,10 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "test": "node --test \"supabase/functions/**/*.test.ts\" \"src/**/*.test.ts\"",
+    "test:functions": "node --test \"supabase/functions/**/*.test.ts\"",
+    "update-types": "supabase gen types typescript --linked > src/types/supabase.ts"
   },
   "dependencies": {
     "@expo-google-fonts/crimson-text": "^0.4.0",

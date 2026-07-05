@@ -385,6 +385,24 @@ deno_version = 2
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
+# =============================================================================
+# Edge Functions
+# =============================================================================
+# Card-saving and charging require a signed-in user, so JWT verification is on
+# (the default). Listed explicitly for clarity.
+[functions.create-setup-intent]
+verify_jwt = true
+
+[functions.create-payment-intent]
+verify_jwt = true
+
+# The Stripe webhook is called by Stripe, NOT the app, so it carries no Supabase
+# JWT. It is authenticated by verifying the Stripe signature against
+# STRIPE_WEBHOOK_SECRET inside the function. JWT verification MUST be disabled or
+# Stripe's calls would be rejected before reaching our signature check.
+[functions.stripe-webhook]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

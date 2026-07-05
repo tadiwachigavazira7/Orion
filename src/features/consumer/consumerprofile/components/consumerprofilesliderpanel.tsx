@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { colors, theme } from '../../../../theme';
 import { fetchPaymentMethods, PaymentMethod, toSavedCardView } from '../paymentMethods';
+import { fetchPurchases, Purchase, toPurchaseView } from '../purchases';
 import { SavedPaymentCard } from './ConsumerProfileSavedPaymentCard';
 
 interface ProfilePanelProps {
@@ -20,9 +21,11 @@ export function ProfileSliderPanel({ activeTab, firstName, setFirstName, lastNam
   const [password, setPassword] = useState('');
 
   const [cards, setCards] = useState<PaymentMethod[]>([]);
+  const [purchases, setPurchases] = useState<Purchase[]>([]);
 
   useEffect(() => {
     fetchPaymentMethods().then(setCards);
+    fetchPurchases().then(setPurchases);
   }, []);
 
   const handleSaveChanges = () => {
@@ -115,9 +118,31 @@ export function ProfileSliderPanel({ activeTab, firstName, setFirstName, lastNam
         {activeTab === 'purchases' && (
           <View style={styles.tabContentWrapper}>
             <Text style={[styles.sectionHeading, { color: theme.text }]}>Purchase History</Text>
-            <Text style={[styles.emptyStateText, { color: theme.text }]}>
-              No purchases recorded yet.
-            </Text>
+
+            {purchases.length === 0 ? (
+              <Text style={[styles.emptyStateText, { color: theme.text }]}>
+                No purchases recorded yet.
+              </Text>
+            ) : (
+              purchases.map((purchase) => {
+                const order = toPurchaseView(purchase);
+                return (
+                  <View
+                    key={order.id}
+                    style={[styles.purchaseCard, { backgroundColor: theme.card === 'white' ? '#FAFAFA' : theme.card }]}
+                  >
+                    <View style={styles.purchaseRow}>
+                      <Text style={[styles.purchaseOrderNumber, { color: theme.text }]}>#{order.orderNumber}</Text>
+                      <Text style={[styles.purchaseTotal, { color: theme.text }]}>{order.total}</Text>
+                    </View>
+                    <View style={styles.purchaseRow}>
+                      <Text style={[styles.purchaseMeta, { color: theme.text }]}>{order.purchasedAt}</Text>
+                      <Text style={[styles.purchaseMeta, { color: theme.text }]}>{order.status}</Text>
+                    </View>
+                  </View>
+                );
+              })
+            )}
           </View>
         )}
 
@@ -193,9 +218,34 @@ const styles = StyleSheet.create({
     fontStyle: 'italic', 
   },
   emptyStateText: {
-    textAlign: 'center', 
-    fontFamily: 'serif', 
+    textAlign: 'center',
+    fontFamily: 'serif',
     marginTop: 20,
     fontSize: 15,
+  },
+  purchaseCard: {
+    width: '100%',
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginBottom: 12,
+  },
+  purchaseRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  purchaseOrderNumber: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  purchaseTotal: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  purchaseMeta: {
+    fontSize: 13,
+    opacity: 0.7,
   },
 });

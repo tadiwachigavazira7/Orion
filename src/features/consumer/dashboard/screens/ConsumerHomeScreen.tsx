@@ -21,7 +21,7 @@ export default function ConsumerHomeScreen() {
       </View>
 
       <View style={styles.searchSection}>
-        <Text style={styles.sectionTitle}>Lets start shopping</Text>
+        <Text style={styles.sectionTitle}>Start shopping now</Text>
         
         <View style={styles.searchBarContainer}>
           <MaterialIcons name="search" size={20} color={theme.subtext} style={styles.searchIcon} />
