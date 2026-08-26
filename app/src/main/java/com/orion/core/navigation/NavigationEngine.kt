@@ -11,7 +11,7 @@ data class NavigationState(
     val confidence: Double,
     val trend: Trend,
     val targetAcquired: Boolean
-)
+) 
 
 enum class Trend { HOTTER, COLDER, STEADY, UNKNOWN }
 
@@ -19,11 +19,27 @@ class NavigationEngine(
     private val smoothing: Double = 0.3,
     private val acquiredRssiThreshold: Double = -35.0
 ) {
+    private var targetEpc: String? = null
     private var smoothedRssi: Double? = null
     private var lastSmoothed: Double? = null
 
-    fun onObservation(targetEpc: String, obs: RfidObservation): NavigationState {
-        if (obs.epc != targetEpc) return currentState()  // ignore every other tag
+    /** Call when the associate selects or changes the target. */
+    fun setTarget(epc: String) {
+        if (epc != targetEpc) {
+            targetEpc = epc
+            reset()
+        }
+    }
+
+    /** Clear tracking state (new search, or target lost). */
+    fun reset() {
+        smoothedRssi = null
+        lastSmoothed = null
+    }
+
+    fun onObservation(obs: RfidObservation): NavigationState {
+        val target = targetEpc ?: return onSignalGap()
+        if (obs.epc != target) return currentState()
 
         val prev = smoothedRssi
         smoothedRssi = if (prev == null) obs.rssi else prev + smoothing * (obs.rssi - prev)
@@ -46,7 +62,7 @@ class NavigationEngine(
         val proximity = ((s + 80.0) / 45.0).coerceIn(0.0, 1.0)
         return NavigationState(
             proximity = proximity,
-            confidence = 0.6,
+            confidence = 0.6,  // PLACEHOLDER — flat until confidence can be modeled from real data
             trend = trend,
             targetAcquired = s >= acquiredRssiThreshold
         )
