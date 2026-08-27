@@ -35,6 +35,6 @@ class FindTagUseCase(
     fun interpret(targetEpc: String): Flow<NavigationState> =
         reader.observations
             .filter { it.epc == targetEpc }
-            .map { engine.onObservation(targetEpc, it) }
+            .map { engine.onObservation(it) }
             .conflate()
 }
