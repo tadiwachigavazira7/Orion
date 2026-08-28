@@ -1,5 +1,5 @@
 [versions]
-agp = "9.3.1"
+agp = "9.3.2"
 # AGP 9+ has built-in Kotlin support (org.jetbrains.kotlin.android is no longer applied)
 # and bundles KGP 2.2.10 as a runtime dependency; kept in sync here for the Compose
 # compiler plugin, which is still applied explicitly. See:
