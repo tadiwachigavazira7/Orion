@@ -32,9 +32,11 @@ class FindTagUseCase(
     suspend fun warmUp(): Result<Unit> =
         reader.connect().mapCatching { reader.startInventory().getOrThrow() }
 
-    fun interpret(targetEpc: String): Flow<NavigationState> =
-        reader.observations
+    fun interpret(targetEpc: String): Flow<NavigationState> {
+        engine.setTarget(targetEpc)
+        return reader.observations
             .filter { it.epc == targetEpc }
             .map { engine.onObservation(it) }
             .conflate()
+    }
 }

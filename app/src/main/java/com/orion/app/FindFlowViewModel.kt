@@ -11,6 +11,7 @@ import com.orion.core.inventory.ResolveResult
 import com.orion.core.inventory.ResolveTargetUseCase
 import com.orion.core.navigation.NavigationState
 import com.orion.core.session.FindTagUseCase
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -58,10 +59,15 @@ class FindFlowViewModel(
 
     fun onEpcChosen(target: EpcTarget) = startNavigation(target)
 
+    private var navigationJob: Job? = null
+
     /** Reached ONLY with a resolved EPC — the structural gate. */
-    private fun startNavigation(target: EpcTarget) = viewModelScope.launch {
-        findTag.find(target.epc)          // ← interpretation pipeline triggers here
-            .catch { _state.value = FindUiState.Error(it.message ?: "navigation failed") }
-            .collect { _state.value = FindUiState.Navigating(it) }
+    private fun startNavigation(target: EpcTarget) {
+        navigationJob?.cancel()
+        navigationJob = viewModelScope.launch {
+            findTag.find(target.epc)          // ← interpretation pipeline triggers here
+                .catch { _state.value = FindUiState.Error(it.message ?: "navigation failed") }
+                .collect { _state.value = FindUiState.Navigating(it) }
+        }
     }
 }
