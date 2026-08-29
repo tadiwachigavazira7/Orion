@@ -9,8 +9,8 @@ import com.orion.core.inventory.ResolveResult
 
 class FakeEpcLookup(
     private val known: Map<String, String?> = mapOf(   // epc -> optional display name
-        "3034F4A9C0" to "Blue Running Shoe M9",
-        "3034F4A9C1" to "Blue Running Shoe M10"
+        "30245BFB8386AA80000186A1" to "Blue Running Shoe M9",
+        "30245BFB8386AAC0000186A2" to "Blue Running Shoe M10"
     )
 ) : EpcLookup {
     override suspend fun validate(epc: String): ResolveResult =

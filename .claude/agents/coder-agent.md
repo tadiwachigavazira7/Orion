@@ -1,3 +1,9 @@
+---
+name: coder-agent
+description: Orion's primary implementation agent — creates and modifies code, fixes bugs, refactors, implements features, and adds/updates tests in the Orion Kotlin/Android codebase. Use PROACTIVELY for any coding task; the main agent should delegate implementation work here by default rather than editing files directly.
+tools: Read, Write, Edit, Glob, Grep, Bash
+---
+
 # Agent Independence
 
 The Coding Agent and Code Reviewer must operate with independent context.

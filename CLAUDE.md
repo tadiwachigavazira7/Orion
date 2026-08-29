@@ -630,3 +630,118 @@ When making an architectural decision, ask:
 The retailer provides the infrastructure and inventory systems. Orion consumes the necessary data, interprets RFID signals, estimates the employee's relationship to the target, determines where the employee should move, and guides them to the item.
 
 The core localization, signal-processing, and navigation technology must remain independent of the underlying hardware vendor.
+
+
+# Agent Orchestration
+
+Agent Orchestration
+
+Orion uses specialized agents for implementation and code review. The main Claude agent is responsible for understanding the user's request, planning the work, selecting the appropriate agent, coordinating the workflow, and communicating the final result.
+
+Coder Agent
+
+The Coder Agent is the default implementation agent for coding work.
+
+Delegate to the Coder Agent when a task requires:
+
+Creating new code
+Modifying existing code
+Fixing bugs
+Refactoring code
+Implementing features
+Adding or modifying tests
+Changing application logic
+Changing architecture or project structure
+Making changes across multiple files
+
+The main agent should not directly implement coding changes when the Coder Agent is available. Instead, it should provide the Coder Agent with the necessary context, requirements, relevant files, constraints, and acceptance criteria.
+
+The user should not need to explicitly request "use the Coder Agent." The main agent should recognize coding work and delegate automatically.
+
+The Coder Agent must:
+
+Inspect the existing implementation before changing it.
+Follow all rules in this CLAUDE.md.
+Make the smallest correct change necessary.
+Avoid unrelated modifications.
+Add or update meaningful tests when appropriate.
+Run relevant tests or verification when possible.
+Report what it changed, what it verified, and any remaining concerns.
+Code Reviewer Agent
+
+The Code Reviewer Agent is responsible for reviewing implementation changes produced by the Coder Agent.
+
+After the Coder Agent completes a non-trivial coding change, the main agent should delegate the resulting changes to the Code Reviewer Agent before considering the task complete.
+
+The Code Reviewer should evaluate:
+
+Correctness
+Bugs and edge cases
+Architectural violations
+Vendor-specific logic leaking into core logic
+Incorrect state handling
+Null/default-value misuse
+Concurrency and lifecycle problems
+Security issues
+Unnecessary complexity
+Missing or inadequate tests
+Violations of the Orion architecture defined in this document
+
+The Code Reviewer should not rewrite or redesign the implementation unnecessarily. Its primary responsibility is to identify problems and provide actionable findings.
+
+Review → Fix Loop
+
+If the Code Reviewer identifies a meaningful issue:
+
+The main agent should pass the finding back to the Coder Agent.
+The Coder Agent should fix the issue.
+The changed implementation should be reviewed again.
+Repeat until the implementation passes review or the main agent determines that the remaining issue requires a product or architectural decision from the user.
+
+Do not repeatedly cycle on subjective stylistic disagreements.
+
+Main Agent Responsibilities
+
+The main agent remains responsible for:
+
+Understanding the user's intent
+Breaking complex requests into appropriate tasks
+Deciding whether delegation is necessary
+Providing context to specialized agents
+Resolving conflicts between agent recommendations
+Asking the user when requirements are genuinely ambiguous
+Communicating the final result
+Ensuring the final implementation complies with this CLAUDE.md
+
+The main agent may handle non-coding work directly, including:
+
+Explaining code
+Answering conceptual questions
+Discussing architecture
+Planning features
+Reviewing agent output
+Helping the user understand errors
+Making product or engineering tradeoff decisions
+Delegation Principle
+
+When in doubt, prefer delegation for implementation work.
+
+The expected workflow for a typical coding task is:
+
+User Request
+↓
+Main Claude Agent
+↓
+Understand / Plan / Identify Relevant Files
+↓
+Coder Agent
+↓
+Implementation + Tests
+↓
+Code Reviewer Agent
+↓
+Pass → Main Agent reports completion
+│
+└── Findings → Coder Agent → Review Again
+
+The main agent should not claim that a specialized agent performed work unless that agent was actually invoked.

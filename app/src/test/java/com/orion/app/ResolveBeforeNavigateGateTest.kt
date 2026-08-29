@@ -15,7 +15,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
-private const val KNOWN_EPC = "3034F4A9C0"
+private const val KNOWN_EPC = "30245BFB8386AA80000186A1"
 
 /**
  * Proves the resolve-before-navigate gate behaviorally: [FindFlowViewModel.startNavigation]
@@ -48,7 +48,8 @@ class ResolveBeforeNavigateGateTest {
     fun `unresolved epc never starts navigation`() {
         val viewModel = newViewModel()
 
-        viewModel.onFind(FindInput.TypedEpc("DEADBEEF")) // well-formed, but unknown to inventory
+        // well-formed SGTIN-96, but unknown to inventory
+        viewModel.onFind(FindInput.TypedEpc("30245BFB8386B8C0000F423F"))
 
         assertTrue(viewModel.state.value is FindUiState.NotFound)
         assertTrue(viewModel.state.value !is FindUiState.Navigating)

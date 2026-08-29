@@ -7,7 +7,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-private const val TARGET_EPC = "3034F4A9C0"
+private const val TARGET_EPC = "30245BFB8386AA80000186A1"
 
 private fun obs(epc: String, rssi: Double) =
     RfidObservation(epc = epc, readerId = "test-reader", rssi = rssi, timestamp = 0L)
