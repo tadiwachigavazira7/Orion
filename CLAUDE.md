@@ -16,7 +16,7 @@ Orion is now a **hardware-agnostic RFID software layer** that runs directly on t
 
 **This is a ground-up Kotlin/Android build.**
 
-> ⚠️ Any prior Orion prototype built on React Native, Expo, TypeScript, FastAPI, or Supabase is **deprecated** and is not the reference for this codebase. Do not carry patterns, assumptions, or code from it into the Kotlin/Android application. If you find yourself reusing a decision from the old stack, stop and re-justify it against this document.
+> Any prior Orion prototype built on React Native, Expo, TypeScript, FastAPI, or Supabase is **deprecated** and is not the reference for this codebase. Do not carry patterns, assumptions, or code from it into the Kotlin/Android application. If you find yourself reusing a decision from the old stack, stop and re-justify it against this document.
 
 When this file and older code disagree, **this file wins.**
 
