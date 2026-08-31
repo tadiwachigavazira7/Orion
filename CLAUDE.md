@@ -16,7 +16,7 @@ Orion is now a **hardware-agnostic RFID software layer** that runs directly on t
 
 **This is a ground-up Kotlin/Android build.**
 
-> ⚠️ Any prior Orion prototype built on React Native, Expo, TypeScript, FastAPI, or Supabase is **deprecated** and is not the reference for this codebase. Do not carry patterns, assumptions, or code from it into the Kotlin/Android application. If you find yourself reusing a decision from the old stack, stop and re-justify it against this document.
+> Any prior Orion prototype built on React Native, Expo, TypeScript, FastAPI, or Supabase is **deprecated** and is not the reference for this codebase. Do not carry patterns, assumptions, or code from it into the Kotlin/Android application. If you find yourself reusing a decision from the old stack, stop and re-justify it against this document.
 
 When this file and older code disagree, **this file wins.**
 
@@ -630,6 +630,7 @@ When making an architectural decision, ask:
 The retailer provides the infrastructure and inventory systems. Orion consumes the necessary data, interprets RFID signals, estimates the employee's relationship to the target, determines where the employee should move, and guides them to the item.
 
 The core localization, signal-processing, and navigation technology must remain independent of the underlying hardware vendor.
+<<<<<<< HEAD
 
 
 # Agent Orchestration
@@ -745,3 +746,5 @@ Pass → Main Agent reports completion
 └── Findings → Coder Agent → Review Again
 
 The main agent should not claim that a specialized agent performed work unless that agent was actually invoked.
+=======
+>>>>>>> 34ccee53e89d5e372c15e71305bd3eeed1a9374a
