@@ -11,7 +11,18 @@ activityCompose = "1.13.0"
 composeBom = "2026.08.00"
 coroutines = "1.11.0"
 junit = "4.13.2"
-securityCrypto = "1.1.0"
+# androidx.datastore:datastore-tink only exists as an alpha artifact (introduced
+# datastore 1.3.0-alpha07); datastore-core is pinned to the SAME 1.3.0-alpha line
+# to avoid mixing an alpha Tink-integration module with a stable core module.
+# Confirmed present on Google's Maven repo (dl.google.com/android/maven2) as of
+# this change. Re-verify before bumping past alpha.
+datastoreTink = "1.3.0-alpha10"
+# Confirmed as the latest release on Maven Central (repo1.maven.org) as of this
+# change: com/google/crypto/tink/tink-android/maven-metadata.xml -> 1.23.0.
+# Newer than the 1.20.0 that datastore-tink-android 1.3.0-alpha10 was built
+# against, but Tink's Aead/KeysetHandle surface used here has been stable
+# across that range; verified via compileDebugKotlin below.
+tinkAndroid = "1.23.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -28,7 +39,9 @@ androidx-material3 = { group = "androidx.compose.material3", name = "material3" 
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
-androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
+androidx-datastore-core = { group = "androidx.datastore", name = "datastore-core", version.ref = "datastoreTink" }
+androidx-datastore-tink = { group = "androidx.datastore", name = "datastore-tink", version.ref = "datastoreTink" }
+tink-android = { group = "com.google.crypto.tink", name = "tink-android", version.ref = "tinkAndroid" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]

@@ -26,7 +26,7 @@ import com.orion.core.enrollment.DeviceIdProvider
 import com.orion.core.enrollment.EnrollDeviceUseCase
 import com.orion.core.enrollment.UnenrollDeviceUseCase
 import com.orion.data.enrollment.AndroidDeviceIdProvider
-import com.orion.data.enrollment.EncryptedPrefsEnrollmentStore
+import com.orion.data.enrollment.DataStoreEnrollmentStore
 import com.orion.data.enrollment.UnconfiguredEnrollmentVerifier
 
 /**
@@ -58,7 +58,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val store = EncryptedPrefsEnrollmentStore(applicationContext)
+        val store = DataStoreEnrollmentStore(applicationContext)
         val verifier = UnconfiguredEnrollmentVerifier()
         val deviceIdProvider = AndroidDeviceIdProvider(contentResolver)
         val factory = EnrollmentViewModelFactory(

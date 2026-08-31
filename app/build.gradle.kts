@@ -60,7 +60,9 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
-    implementation(libs.androidx.security.crypto)
+    implementation(libs.androidx.datastore.core)
+    implementation(libs.androidx.datastore.tink)
+    implementation(libs.tink.android)
 
     debugImplementation(libs.androidx.ui.tooling)
 
