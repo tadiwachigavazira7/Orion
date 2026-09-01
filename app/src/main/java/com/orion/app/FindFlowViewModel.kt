@@ -9,7 +9,6 @@ import com.orion.core.inventory.EpcTarget
 import com.orion.core.inventory.FindInput
 import com.orion.core.inventory.ResolveResult
 import com.orion.core.inventory.ResolveTargetUseCase
-import com.orion.core.navigation.NavigationState
 import com.orion.core.session.FindTagUseCase
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,7 +23,7 @@ sealed interface FindUiState {
     data class PickEpc(val candidates: List<EpcTarget>) : FindUiState  // only from search
     data class NotFound(val epc: String) : FindUiState
     data class Invalid(val reason: String) : FindUiState
-    data class Navigating(val nav: NavigationState) : FindUiState
+    data class Navigating(val compass: CompassUiState, val targetName: String) : FindUiState
     data class Error(val message: String) : FindUiState
 }
 
@@ -63,11 +62,23 @@ class FindFlowViewModel(
 
     /** Reached ONLY with a resolved EPC — the structural gate. */
     private fun startNavigation(target: EpcTarget) {
+        val targetName = target.displayName ?: target.epc
         navigationJob?.cancel()
+        _state.value = FindUiState.Navigating(CompassUiState.Searching, targetName)
         navigationJob = viewModelScope.launch {
             findTag.find(target.epc)          // ← interpretation pipeline triggers here
-                .catch { _state.value = FindUiState.Error(it.message ?: "navigation failed") }
-                .collect { _state.value = FindUiState.Navigating(it) }
+                .catch {
+                    // A failure here happens AFTER the compass screen has mounted (reader
+                    // connect/startInventory failure, or an unexpected mid-stream exception),
+                    // so it's rendered inside the compass screen with target context rather
+                    // than collapsing back to the top-level FindUiState.Error used for
+                    // pre-navigation resolution failures.
+                    _state.value = FindUiState.Navigating(
+                        CompassUiState.Error(it.message ?: "navigation failed"),
+                        targetName
+                    )
+                }
+                .collect { _state.value = FindUiState.Navigating(it.toCompassUiState(), targetName) }
         }
     }
 }
