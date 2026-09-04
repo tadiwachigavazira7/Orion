@@ -1,0 +1,69 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+.pnpm-store/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native certificates and keys
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.pem
+*.keystore
+
+# Metro
+.metro-health-check*
+
+# Debug & Logs
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+pnpm-debug.*
+*.log
+
+# System Files
+.DS_Store
+Thumbs.db
+
+# 🚨 STRICT ENV / SECRET BLOCKING
+.env
+.env.local
+.env.*.local
+.env*
+!.env.example
+
+# IDEs and Editors
+.vscode/
+/.idea/
+*.iml
+
+# Typescript
+*.tsbuildinfo
+
+# Generated native folders (Expo Prebuild)
+/ios/
+/android/
+
+# Android / Gradle specific
+.gradle/
+/local.properties
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html

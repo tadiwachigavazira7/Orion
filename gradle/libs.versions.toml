@@ -1,0 +1,49 @@
+[versions]
+agp = "9.3.2"
+# AGP 9+ has built-in Kotlin support (org.jetbrains.kotlin.android is no longer applied)
+# and bundles KGP 2.2.10 as a runtime dependency; kept in sync here for the Compose
+# compiler plugin, which is still applied explicitly. See:
+# https://developer.android.com/build/releases/agp-9-0-0-release-notes#android-gradle-plugin-built-in-kotlin
+kotlin = "2.2.10"
+coreKtx = "1.19.0"
+lifecycleRuntimeKtx = "2.11.0"
+activityCompose = "1.13.0"
+composeBom = "2026.08.00"
+coroutines = "1.11.0"
+junit = "4.13.2"
+# androidx.datastore:datastore-tink only exists as an alpha artifact (introduced
+# datastore 1.3.0-alpha07); datastore-core is pinned to the SAME 1.3.0-alpha line
+# to avoid mixing an alpha Tink-integration module with a stable core module.
+# Confirmed present on Google's Maven repo (dl.google.com/android/maven2) as of
+# this change. Re-verify before bumping past alpha.
+datastoreTink = "1.3.0-alpha10"
+# Confirmed as the latest release on Maven Central (repo1.maven.org) as of this
+# change: com/google/crypto/tink/tink-android/maven-metadata.xml -> 1.23.0.
+# Newer than the 1.20.0 that datastore-tink-android 1.3.0-alpha10 was built
+# against, but Tink's Aead/KeysetHandle surface used here has been stable
+# across that range; verified via compileDebugKotlin below.
+tinkAndroid = "1.23.0"
+
+[libraries]
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
+androidx-lifecycle-viewmodel-ktx = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-ktx", version.ref = "lifecycleRuntimeKtx" }
+androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycleRuntimeKtx" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+androidx-ui = { group = "androidx.compose.ui", name = "ui" }
+androidx-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+androidx-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+androidx-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
+kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
+androidx-datastore-core = { group = "androidx.datastore", name = "datastore-core", version.ref = "datastoreTink" }
+androidx-datastore-tink = { group = "androidx.datastore", name = "datastore-tink", version.ref = "datastoreTink" }
+tink-android = { group = "com.google.crypto.tink", name = "tink-android", version.ref = "tinkAndroid" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
