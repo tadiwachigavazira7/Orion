@@ -13,13 +13,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -93,7 +91,7 @@ class MainActivity : ComponentActivity() {
                             state = enrollmentState,
                             onEnroll = { orgCode, siteCode -> viewModel.enroll(orgCode, siteCode) }
                         )
-                    is EnrollmentUiState.Enrolled -> FindDemoScreen()
+                    is EnrollmentUiState.Enrolled -> FindScreen()
                 }
             }
         }
@@ -112,7 +110,7 @@ private fun CheckingEnrollmentScreen() {
 }
 
 /**
- * Minimal, hand-rolled [ViewModelProvider.Factory] for [FindDemoScreen] below —
+ * Minimal, hand-rolled [ViewModelProvider.Factory] for [FindScreen] below —
  * same no-DI-framework pattern as [EnrollmentViewModelFactory].
  */
 private class FindFlowViewModelFactory(
@@ -125,26 +123,26 @@ private class FindFlowViewModelFactory(
     }
 }
 
-/** A well-formed SGTIN-96 known to [FakeEpcLookup] ("Blue Running Shoe M9"). */
+/** A well-formed SGTIN-96 known to [FakeEpcLookup] ("Blue Running Shoe M9"), used only to seed the emulator's fake reader/lookup pair below — not auto-submitted. */
 private const val DEMO_TARGET_EPC = "30245BFB8386AA80000186A1"
 
 /**
- * TEMPORARY EMULATOR DEMO — NOT the production find flow.
+ * Find flow entry point.
  *
  * Wires [FindFlowViewModel] to the hardware-free [FakeRfidReader] /
- * [FakeEpcLookup] simulation pair (see integrations/fake) so [CompassScreen]
- * can be exercised end-to-end on an emulator with no RFID hardware and no
- * real inventory backend: [FakeRfidReader] simulates "walking closer" to the
- * target over a few seconds. On first composition it immediately resolves
- * and starts navigating to [DEMO_TARGET_EPC] — there is no EPC-entry UI yet.
+ * [FakeEpcLookup] simulation pair (see integrations/fake) so the flow can be
+ * exercised end-to-end on an emulator with no RFID hardware and no real
+ * inventory backend: [FakeRfidReader] simulates "walking closer" to the
+ * target once navigation starts. The associate drives resolution themselves
+ * via [EpcEntryScreen] (typed EPC or search-by-name); nothing is auto-resolved.
  *
- * Replace this with a real EPC-entry screen (scan / type / search) wired to
- * a real [com.orion.core.rfid.RfidReader] / [com.orion.core.inventory.EpcLookup]
- * pair once one exists. [FindFlowViewModel] and [CompassScreen] do not need
- * to change to support that swap.
+ * Replace [FakeRfidReader] / [FakeEpcLookup] with real
+ * [com.orion.core.rfid.RfidReader] / [com.orion.core.inventory.EpcLookup]
+ * implementations once they exist. [FindFlowViewModel], [EpcEntryScreen], and
+ * [CompassScreen] do not need to change to support that swap.
  */
 @Composable
-private fun FindDemoScreen() {
+private fun FindScreen() {
     val factory = remember {
         FindFlowViewModelFactory(
             resolveTarget = ResolveTargetUseCase(FakeEpcLookup()),
@@ -154,39 +152,15 @@ private fun FindDemoScreen() {
     val viewModel: FindFlowViewModel = viewModel(factory = factory)
     val state by viewModel.state.collectAsState()
 
-    LaunchedEffect(Unit) {
-        viewModel.onFind(FindInput.TypedEpc(DEMO_TARGET_EPC))
-    }
-
     when (val findState = state) {
         is FindUiState.Navigating -> CompassScreen(findState.compass, findState.targetName)
-        // Genuinely still in progress — a loading spinner is honest here.
-        is FindUiState.Idle,
-        is FindUiState.Resolving,
-        is FindUiState.PickEpc -> CheckingEnrollmentScreen()
-        // Real, terminal failures — must NOT be indistinguishable from "still loading"
-        // (CLAUDE.md §12/§22).
-        is FindUiState.NotFound -> DemoResolutionFailureScreen("EPC not found: ${findState.epc}")
-        is FindUiState.Invalid -> DemoResolutionFailureScreen("Invalid EPC: ${findState.reason}")
-        is FindUiState.Error -> DemoResolutionFailureScreen("Lookup failed: ${findState.message}")
-    }
-}
-
-/** Distinct, non-loading rendering for a demo resolution failure (NotFound / Invalid / Error). */
-@Composable
-private fun DemoResolutionFailureScreen(message: String) {
-    Scaffold { padding ->
-        Surface(modifier = Modifier.fillMaxSize().padding(padding)) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = message,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.error,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(24.dp)
-                )
-            }
-        }
+        else -> EpcEntryScreen(
+            state = findState,
+            onResolutionScreenOpened = viewModel::onResolutionScreenOpened,
+            onTypedEpc = { viewModel.onFind(FindInput.TypedEpc(it)) },
+            onSearch = viewModel::onSearch,
+            onEpcChosen = viewModel::onEpcChosen
+        )
     }
 }
 
