@@ -630,7 +630,6 @@ When making an architectural decision, ask:
 The retailer provides the infrastructure and inventory systems. Orion consumes the necessary data, interprets RFID signals, estimates the employee's relationship to the target, determines where the employee should move, and guides them to the item.
 
 The core localization, signal-processing, and navigation technology must remain independent of the underlying hardware vendor.
-<<<<<<< HEAD
 
 
 # Agent Orchestration
@@ -746,5 +745,3 @@ Pass → Main Agent reports completion
 └── Findings → Coder Agent → Review Again
 
 The main agent should not claim that a specialized agent performed work unless that agent was actually invoked.
-=======
->>>>>>> 34ccee53e89d5e372c15e71305bd3eeed1a9374a

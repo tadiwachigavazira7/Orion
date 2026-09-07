@@ -67,3 +67,16 @@ captures/
 # Fastlane
 fastlane/report.xml
 fastlane/Preview.html
+
+# Python / FastAPI backend
+orion_fastAPI/venv/
+orion_fastAPI/.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
