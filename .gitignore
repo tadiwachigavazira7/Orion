@@ -10,7 +10,7 @@ dist/
 web-build/
 expo-env.d.ts
 
-# Native certificates and keys
+
 .kotlin/
 *.orig.*
 *.jks
@@ -21,8 +21,10 @@ expo-env.d.ts
 *.pem
 *.keystore
 
+
 # Metro
 .metro-health-check*
+
 
 # Debug & Logs
 npm-debug.*
@@ -57,6 +59,35 @@ Thumbs.db
 # Android / Gradle specific
 .gradle/
 /local.properties
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+app-example
+
+# generated native folders
+/ios
+/android
+
+# Android / Gradle
+*.iml
+.gradle/
+/local.properties
+/.idea/
+>>>>>>> origin/main
 build/
 captures/
 .externalNativeBuild/

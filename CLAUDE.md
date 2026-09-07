@@ -632,6 +632,7 @@ The retailer provides the infrastructure and inventory systems. Orion consumes t
 The core localization, signal-processing, and navigation technology must remain independent of the underlying hardware vendor.
 
 
+
 # Agent Orchestration
 
 Agent Orchestration
@@ -745,3 +746,4 @@ Pass → Main Agent reports completion
 └── Findings → Coder Agent → Review Again
 
 The main agent should not claim that a specialized agent performed work unless that agent was actually invoked.
+
