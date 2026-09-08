@@ -87,7 +87,6 @@ app-example
 .gradle/
 /local.properties
 /.idea/
->>>>>>> origin/main
 build/
 captures/
 .externalNativeBuild/
