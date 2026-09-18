@@ -15,7 +15,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
@@ -77,21 +80,26 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             MaterialTheme {
+                var showSplash by rememberSaveable { mutableStateOf(true) }
                 val viewModel: EnrollmentViewModel = viewModel(factory = factory)
                 val state by viewModel.state.collectAsState()
 
-                when (val enrollmentState = state) {
-                    is EnrollmentUiState.CheckingEnrollment -> CheckingEnrollmentScreen()
-                    is EnrollmentUiState.NeedsEnrollment,
-                    is EnrollmentUiState.NeedsReEnrollment,
-                    is EnrollmentUiState.Enrolling,
-                    is EnrollmentUiState.EnrollmentRejected,
-                    is EnrollmentUiState.EnrollmentFailed ->
-                        EnrollmentScreen(
-                            state = enrollmentState,
-                            onEnroll = { orgCode, siteCode -> viewModel.enroll(orgCode, siteCode) }
-                        )
-                    is EnrollmentUiState.Enrolled -> FindScreen()
+                if (showSplash) {
+                    SplashScreen(onFinished = { showSplash = false })
+                } else {
+                    when (val enrollmentState = state) {
+                        is EnrollmentUiState.CheckingEnrollment -> CheckingEnrollmentScreen()
+                        is EnrollmentUiState.NeedsEnrollment,
+                        is EnrollmentUiState.NeedsReEnrollment,
+                        is EnrollmentUiState.Enrolling,
+                        is EnrollmentUiState.EnrollmentRejected,
+                        is EnrollmentUiState.EnrollmentFailed ->
+                            EnrollmentScreen(
+                                state = enrollmentState,
+                                onEnroll = { orgCode, siteCode -> viewModel.enroll(orgCode, siteCode) }
+                            )
+                        is EnrollmentUiState.Enrolled -> FindScreen()
+                    }
                 }
             }
         }

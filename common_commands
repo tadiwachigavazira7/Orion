@@ -1,0 +1,7 @@
+
+POSTGRESQL/DOCKER
+Command to start docker PostgreSQL instance (" docker ps " to check if its running) :  docker start orion-postgres
+Command to enter the PostgreSQL table from WSL:  docker exec -it orion-postgres psql -U orion
+
+PYTHON FastAPI
+Command to start the FastAPI backend (must be in orion_fastAPI directory): uv run uvicorn orion_backend.main:app --reload
