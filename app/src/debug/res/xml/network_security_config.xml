@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-build-only network security config. Permits cleartext (plain HTTP,
+  not HTTPS) traffic to 10.0.2.2, the Android emulator's host-loopback
+  alias and the default value of BuildConfig.ENROLLMENT_BASE_URL for debug
+  builds (see app/build.gradle.kts), so HttpEnrollmentVerifier can reach a
+  local dev backend during development/emulator testing.
+
+  This file lives under src/debug/ ONLY: it is merged into the debug variant's
+  manifest and has no effect on release builds, which keep the platform
+  default (cleartext blocked entirely) and additionally ship an empty
+  ENROLLMENT_BASE_URL (see MainActivity), so release never attempts a
+  cleartext enrollment call in the first place.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

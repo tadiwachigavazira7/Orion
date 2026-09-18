@@ -23,6 +23,19 @@ datastoreTink = "1.3.0-alpha10"
 # against, but Tink's Aead/KeysetHandle surface used here has been stable
 # across that range; verified via compileDebugKotlin below.
 tinkAndroid = "1.23.0"
+# Confirmed as the latest stable release on Maven Central (repo1.maven.org) as of this
+# change: com/squareup/okhttp3/okhttp/maven-metadata.xml -> release=5.5.0. mockwebserver
+# (test-only) is published from the same okhttp3 release train and pinned to the same
+# version for compatibility.
+okhttp = "5.5.0"
+# Reference org.json implementation, TEST-ONLY: android.jar's org.json classes on the host
+# JVM unit-test classpath are stub-only (throw at runtime), so HttpEnrollmentVerifierTest
+# needs a real org.json.JSONObject implementation to actually parse JSON, not just compile
+# against the stub. Never shipped in the app (testImplementation only) -- on-device this
+# resolves to Android's real platform org.json at runtime, unaffected by this dependency.
+# Confirmed as the latest release on Maven Central as of this change:
+# org/json/json/maven-metadata.xml -> latest/release=20260814.
+orgJson = "20260814"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -42,6 +55,9 @@ kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-cor
 androidx-datastore-core = { group = "androidx.datastore", name = "datastore-core", version.ref = "datastoreTink" }
 androidx-datastore-tink = { group = "androidx.datastore", name = "datastore-tink", version.ref = "datastoreTink" }
 tink-android = { group = "com.google.crypto.tink", name = "tink-android", version.ref = "tinkAndroid" }
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "okhttp" }
+org-json = { group = "org.json", name = "json", version.ref = "orgJson" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]

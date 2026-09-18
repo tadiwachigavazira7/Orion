@@ -28,15 +28,18 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.orion.BuildConfig
 import com.orion.core.enrollment.CheckEnrollmentUseCase
 import com.orion.core.enrollment.DeviceIdProvider
 import com.orion.core.enrollment.EnrollDeviceUseCase
+import com.orion.core.enrollment.EnrollmentVerifier
 import com.orion.core.enrollment.UnenrollDeviceUseCase
 import com.orion.core.inventory.FindInput
 import com.orion.core.inventory.ResolveTargetUseCase
 import com.orion.core.session.FindTagUseCase
 import com.orion.data.enrollment.AndroidDeviceIdProvider
 import com.orion.data.enrollment.DataStoreEnrollmentStore
+import com.orion.data.enrollment.HttpEnrollmentVerifier
 import com.orion.data.enrollment.UnconfiguredEnrollmentVerifier
 import com.orion.integrations.fake.FakeEpcLookup
 import com.orion.integrations.fake.FakeRfidReader
@@ -71,7 +74,14 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         val store = DataStoreEnrollmentStore(applicationContext)
-        val verifier = UnconfiguredEnrollmentVerifier()
+        // Real backend when BuildConfig.ENROLLMENT_BASE_URL is configured (debug/emulator
+        // builds by default; see app/build.gradle.kts), otherwise the honest placeholder --
+        // release builds ship an empty ENROLLMENT_BASE_URL until a real backend is wired up
+        // for that build type, rather than baking in a local dev address.
+        val verifier: EnrollmentVerifier = BuildConfig.ENROLLMENT_BASE_URL
+            .takeIf { it.isNotBlank() }
+            ?.let { HttpEnrollmentVerifier(baseUrl = it) }
+            ?: UnconfiguredEnrollmentVerifier()
         val deviceIdProvider = AndroidDeviceIdProvider(contentResolver)
         val factory = EnrollmentViewModelFactory(
             checkEnrollment = CheckEnrollmentUseCase(store),

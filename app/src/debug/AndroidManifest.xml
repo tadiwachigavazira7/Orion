@@ -1,0 +1,10 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Merged into the debug variant only. See
+      src/debug/res/xml/network_security_config.xml for why this is scoped to
+      debug and does not affect release.
+    -->
+    <application android:networkSecurityConfig="@xml/network_security_config" />
+
+</manifest>

@@ -25,12 +25,27 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Overridable via `-PORION_ENROLLMENT_BASE_URL=...` (e.g. to point a physical
+            // device on the LAN at a dev backend instead of the emulator). Defaults to the
+            // Android emulator's host-loopback alias -- the verified address of the local
+            // FastAPI enrollment backend as seen from inside the emulator, NOT
+            // localhost/127.0.0.1 (which inside the emulator refers to the emulator itself).
+            val enrollmentBaseUrl =
+                (project.findProperty("ORION_ENROLLMENT_BASE_URL") as String?) ?: "http://10.0.2.2:8000"
+            buildConfigField("String", "ENROLLMENT_BASE_URL", "\"$enrollmentBaseUrl\"")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Deliberately empty, not a hardcoded local dev address: a release build with no
+            // configured backend falls back to UnconfiguredEnrollmentVerifier (see
+            // MainActivity), preserving "honest failure until a real backend is configured"
+            // for anything other than debug/emulator builds.
+            buildConfigField("String", "ENROLLMENT_BASE_URL", "\"\"")
         }
     }
 
@@ -44,6 +59,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -63,9 +79,12 @@ dependencies {
     implementation(libs.androidx.datastore.core)
     implementation(libs.androidx.datastore.tink)
     implementation(libs.tink.android)
+    implementation(libs.okhttp)
 
     debugImplementation(libs.androidx.ui.tooling)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(libs.org.json)
 }
