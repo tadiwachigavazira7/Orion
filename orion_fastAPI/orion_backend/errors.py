@@ -47,3 +47,36 @@ class InvalidCredentialError(OrionDeviceError):
 
     def __init__(self, device_id: str):
         super().__init__(f"Credential for device '{device_id}' did not verify.")
+
+
+class OrganizationNotFoundError(OrionDeviceError):
+    error_code = "organization_not_found"
+    http_status = 404
+
+    def __init__(self, organization_code: str):
+        super().__init__(f"Organization '{organization_code}' was not found.")
+
+
+class SiteNotFoundError(OrionDeviceError):
+    error_code = "site_not_found"
+    http_status = 404
+
+    def __init__(self, site_code: str):
+        super().__init__(f"Site '{site_code}' was not found.")
+
+
+class SiteOrganizationMismatchError(OrionDeviceError):
+    """The site code exists, but not under the given organization.
+
+    Kept distinct from SiteNotFoundError - not a credential-secrecy concern
+    (organization/site codes are not secrets), so the more specific error is
+    safe to surface and independently testable.
+    """
+
+    error_code = "site_organization_mismatch"
+    http_status = 404
+
+    def __init__(self, site_code: str, organization_code: str):
+        super().__init__(
+            f"Site '{site_code}' does not belong to organization '{organization_code}'."
+        )

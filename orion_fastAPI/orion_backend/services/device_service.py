@@ -10,10 +10,10 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from orion_backend.db.models import DeviceStatus, EnrolledDevice
+from orion_backend.db.models import DeviceStatus, EnrolledDevice, Site
 from orion_backend.errors import (
-    DeviceAlreadyEnrolledError,
     DeviceNotFoundError,
     DeviceRevokedError,
     InvalidCredentialError,
@@ -21,41 +21,28 @@ from orion_backend.errors import (
 from orion_backend.services.credential_hasher import CredentialHasher
 
 
-async def _get_by_device_id(db: AsyncSession, device_id: str) -> EnrolledDevice | None:
-    result = await db.execute(select(EnrolledDevice).where(EnrolledDevice.device_id == device_id))
+async def find_by_device_id(db: AsyncSession, device_id: str) -> EnrolledDevice | None:
+    """Look up a device by device_id, eagerly loading its site and that
+    site's organization.
+
+    Callers (routes, other services) need device.site.site_code and
+    device.site.organization.organization_code for response bodies. The
+    async ORM does not support implicit lazy-loading outside active IO, so
+    those relationships must be eagerly loaded here rather than accessed
+    lazily by callers.
+    """
+    result = await db.execute(
+        select(EnrolledDevice)
+        .where(EnrolledDevice.device_id == device_id)
+        .options(selectinload(EnrolledDevice.site).selectinload(Site.organization))
+    )
     return result.scalar_one_or_none()
 
 
 async def get_device(db: AsyncSession, device_id: str) -> EnrolledDevice:
-    device = await _get_by_device_id(db, device_id)
+    device = await find_by_device_id(db, device_id)
     if device is None:
         raise DeviceNotFoundError(device_id)
-    return device
-
-
-async def enroll_device(
-    db: AsyncSession,
-    hasher: CredentialHasher,
-    device_id: str,
-    site_id: str,
-    enrollment_credential: str,
-) -> EnrolledDevice:
-    existing = await _get_by_device_id(db, device_id)
-    if existing is not None:
-        # Enrollment never silently overwrites an existing record, ACTIVE or
-        # REVOKED — re-enrolling a revoked device is a separate, deliberate
-        # decision this endpoint does not make on its own.
-        raise DeviceAlreadyEnrolledError(device_id)
-
-    device = EnrolledDevice(
-        device_id=device_id,
-        site_id=site_id,
-        credential_hash=hasher.hash(enrollment_credential),
-        status=DeviceStatus.ACTIVE,
-    )
-    db.add(device)
-    await db.commit()
-    await db.refresh(device)
     return device
 
 
@@ -65,7 +52,7 @@ async def verify_device(
     device_id: str,
     enrollment_credential: str,
 ) -> EnrolledDevice:
-    device = await _get_by_device_id(db, device_id)
+    device = await find_by_device_id(db, device_id)
     if device is None:
         raise DeviceNotFoundError(device_id)
     if device.status != DeviceStatus.ACTIVE:
@@ -80,7 +67,7 @@ async def verify_device(
 
 
 async def revoke_device(db: AsyncSession, device_id: str) -> EnrolledDevice:
-    device = await _get_by_device_id(db, device_id)
+    device = await find_by_device_id(db, device_id)
     if device is None:
         raise DeviceNotFoundError(device_id)
 

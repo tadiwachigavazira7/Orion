@@ -5,16 +5,18 @@ from pydantic import BaseModel, Field
 from orion_backend.db.models import DeviceStatus
 
 
-class EnrollDeviceRequest(BaseModel):
+class EnrollmentRequest(BaseModel):
+    organization_code: str = Field(min_length=1, max_length=128)
+    site_code: str = Field(min_length=1, max_length=128)
     device_id: str = Field(min_length=1, max_length=128)
-    site_id: str = Field(min_length=1, max_length=128)
-    enrollment_credential: str = Field(min_length=8, max_length=4096)
 
 
-class EnrollDeviceResponse(BaseModel):
+class EnrollmentResponse(BaseModel):
     device_id: str
-    site_id: str
+    organization_code: str
+    site_code: str
     status: DeviceStatus
+    enrollment_credential: str  # returned exactly once, at enrollment time only
 
 
 class VerifyDeviceRequest(BaseModel):
@@ -24,12 +26,15 @@ class VerifyDeviceRequest(BaseModel):
 class VerifyDeviceResponse(BaseModel):
     verified: bool
     device_id: str
-    site_id: str
+    organization_code: str
+    site_code: str
+    status: DeviceStatus
 
 
 class DeviceStatusResponse(BaseModel):
     device_id: str
-    site_id: str
+    organization_code: str
+    site_code: str
     status: DeviceStatus
     last_verified_at: datetime | None
 
