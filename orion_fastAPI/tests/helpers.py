@@ -39,3 +39,37 @@ async def enroll(
             "device_id": device_id,
         },
     )
+
+
+# Must match tests/conftest.py's ADMIN_API_KEY setdefault, and stay
+# >=16 chars to satisfy Settings.admin_api_key's min_length.
+DEFAULT_ADMIN_API_KEY = "test-admin-key-001"
+
+
+async def provision_organization(
+    client: AsyncClient,
+    organization_code: str = DEFAULT_ORGANIZATION_CODE,
+    name: str = "Test Organization",
+    api_key: str | None = DEFAULT_ADMIN_API_KEY,
+) -> Response:
+    headers = {"X-Admin-Api-Key": api_key} if api_key is not None else {}
+    return await client.post(
+        "/admin/organizations",
+        json={"organization_code": organization_code, "name": name},
+        headers=headers,
+    )
+
+
+async def provision_site(
+    client: AsyncClient,
+    organization_code: str = DEFAULT_ORGANIZATION_CODE,
+    site_code: str = DEFAULT_SITE_CODE,
+    name: str = "Test Site",
+    api_key: str | None = DEFAULT_ADMIN_API_KEY,
+) -> Response:
+    headers = {"X-Admin-Api-Key": api_key} if api_key is not None else {}
+    return await client.post(
+        "/admin/sites",
+        json={"organization_code": organization_code, "site_code": site_code, "name": name},
+        headers=headers,
+    )

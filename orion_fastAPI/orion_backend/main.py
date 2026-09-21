@@ -8,11 +8,13 @@ from fastapi.responses import JSONResponse
 
 from orion_backend.api.devices import router as devices_router
 from orion_backend.api.enrollment import router as enrollment_router
+from orion_backend.api.provisioning import router as provisioning_router
 from orion_backend.config import get_settings
 from orion_backend.db.base import build_engine, build_sessionmaker
 from orion_backend.errors import OrionDeviceError
 
 logger = logging.getLogger("orion_backend")
+
 
 
 @asynccontextmanager
@@ -51,7 +53,12 @@ def create_app() -> FastAPI:
 
     app.include_router(devices_router)
     app.include_router(enrollment_router)
+    app.include_router(provisioning_router)
     return app
 
 
 app = create_app()
+
+@app.get("/")
+def read_root():
+    return {"status": "FastAPI backend is running successfully!"}

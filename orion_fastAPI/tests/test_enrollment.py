@@ -2,7 +2,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orion_backend.db.models import DeviceStatus, EnrolledDevice
+from orion_backend.db.models import DeviceStatus, EnrolledDevice, Organization, Site
 from tests.helpers import DEFAULT_ORGANIZATION_CODE, DEFAULT_SITE_CODE, create_organization_and_site, enroll
 
 
@@ -38,6 +38,41 @@ async def test_enrollment_with_unknown_site_is_rejected(client: AsyncClient, db_
 
     assert response.status_code == 404
     assert response.json()["error_code"] == "site_not_found"
+
+
+async def test_enrollment_with_unknown_organization_does_not_create_organization(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """Encodes the invariant that Android enrollment can never create an
+    organization - enrollment_service only ever resolves/rejects, it never
+    inserts (see CLAUDE.md and services/provisioning_service.py). A 404
+    strongly implies this, but this test checks the database directly rather
+    than relying on that inference.
+    """
+    await create_organization_and_site(db_session)
+
+    response = await enroll(client, device_id="PDT-1e", organization_code="NO-SUCH-ORG")
+    assert response.status_code == 404
+
+    result = await db_session.execute(
+        select(Organization).where(Organization.organization_code == "NO-SUCH-ORG")
+    )
+    assert result.scalar_one_or_none() is None
+
+
+async def test_enrollment_with_unknown_site_does_not_create_site(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """Same invariant as above, for sites: a rejected enrollment must never
+    create a Site row under the resolved organization.
+    """
+    await create_organization_and_site(db_session)
+
+    response = await enroll(client, device_id="PDT-1f", site_code="NO-SUCH-SITE")
+    assert response.status_code == 404
+
+    result = await db_session.execute(select(Site).where(Site.site_code == "NO-SUCH-SITE"))
+    assert result.scalar_one_or_none() is None
 
 
 async def test_enrollment_with_site_from_different_organization_is_rejected(

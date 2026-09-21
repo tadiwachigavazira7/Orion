@@ -5,6 +5,12 @@ import os
 # database URL is TEST_DATABASE_URL below, wired in directly via
 # app.state.sessionmaker (see the `client` fixture), bypassing app startup.
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://unused:unused@localhost/unused")
+# Must be set before orion_backend import for the same reason as DATABASE_URL
+# above - pydantic-settings needs a value to validate against. Must be
+# >=16 chars to satisfy Settings.admin_api_key's min_length. Tests that
+# exercise the admin-gated /admin/* routes pass this same value as
+# X-Admin-Api-Key (see tests/helpers.py).
+os.environ.setdefault("ADMIN_API_KEY", "test-admin-key-001")
 
 from collections.abc import AsyncIterator  # noqa: E402
 

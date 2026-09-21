@@ -80,3 +80,21 @@ class SiteOrganizationMismatchError(OrionDeviceError):
         super().__init__(
             f"Site '{site_code}' does not belong to organization '{organization_code}'."
         )
+
+
+class OrganizationCodeAlreadyExistsError(OrionDeviceError):
+    error_code = "organization_code_already_exists"
+    http_status = 409
+
+    def __init__(self, organization_code: str):
+        super().__init__(f"Organization code '{organization_code}' already exists.")
+
+
+class SiteCodeAlreadyExistsError(OrionDeviceError):
+    error_code = "site_code_already_exists"
+    http_status = 409
+
+    def __init__(self, site_code: str, organization_code: str):
+        super().__init__(
+            f"Site code '{site_code}' already exists under organization '{organization_code}'."
+        )
