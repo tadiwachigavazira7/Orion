@@ -14,13 +14,16 @@
 // ============================================================
 package com.orion.app
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -38,7 +41,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import com.orion.R
 import com.orion.core.inventory.EpcTarget
 
 /**
@@ -66,80 +72,93 @@ fun EpcEntryScreen(
     Scaffold { padding ->
         Surface(modifier = Modifier.fillMaxSize().padding(padding)) {
             Column(
-                modifier = Modifier.fillMaxSize().padding(24.dp),
-                verticalArrangement = Arrangement.Center
+                modifier = Modifier.fillMaxSize().imePadding().padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text("Find an item", style = MaterialTheme.typography.headlineSmall)
-
-                OutlinedTextField(
-                    value = epcInput,
-                    onValueChange = { epcInput = it },
-                    label = { Text("EPC") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-                    enabled = inputsEnabled
+                Image(
+                    painter = painterResource(R.drawable.orion_logo),
+                    contentDescription = "Orion logo",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.width(140.dp)
                 )
-                Button(
-                    onClick = { onTypedEpc(epcInput) },
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    enabled = inputsEnabled && epcInput.isNotBlank()
+
+                // Scrolls so the form stays reachable on small screens / with the keyboard open.
+                Column(
+                    modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.Center
                 ) {
-                    Text("Find")
-                }
+                    Text("Find an item", style = MaterialTheme.typography.headlineSmall)
 
-                HorizontalDivider(modifier = Modifier.padding(top = 24.dp, bottom = 24.dp))
-
-                OutlinedTextField(
-                    value = searchInput,
-                    onValueChange = { searchInput = it },
-                    label = { Text("Search by name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = inputsEnabled
-                )
-                Button(
-                    onClick = { onSearch(searchInput) },
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    enabled = inputsEnabled && searchInput.isNotBlank()
-                ) {
-                    Text("Search")
-                }
-
-                when (state) {
-                    is FindUiState.Resolving -> Column(
+                    OutlinedTextField(
+                        value = epcInput,
+                        onValueChange = { epcInput = it },
+                        label = { Text("EPC") },
+                        singleLine = true,
                         modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                        enabled = inputsEnabled
+                    )
+                    Button(
+                        onClick = { onTypedEpc(epcInput) },
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        enabled = inputsEnabled && epcInput.isNotBlank()
                     ) {
-                        CircularProgressIndicator()
-                        Text("Looking up…", modifier = Modifier.padding(top = 8.dp))
+                        Text("Find")
                     }
 
-                    is FindUiState.PickEpc -> CandidateList(
-                        candidates = state.candidates,
-                        onEpcChosen = onEpcChosen
-                    )
+                    HorizontalDivider(modifier = Modifier.padding(top = 24.dp, bottom = 24.dp))
 
-                    is FindUiState.NotFound -> Text(
-                        "No item found for \"${state.epc}\".",
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(top = 16.dp)
+                    OutlinedTextField(
+                        value = searchInput,
+                        onValueChange = { searchInput = it },
+                        label = { Text("Search by name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = inputsEnabled
                     )
+                    Button(
+                        onClick = { onSearch(searchInput) },
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        enabled = inputsEnabled && searchInput.isNotBlank()
+                    ) {
+                        Text("Search")
+                    }
 
-                    is FindUiState.Invalid -> Text(
-                        "That EPC isn't valid: ${state.reason}",
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(top = 16.dp)
-                    )
+                    when (state) {
+                        is FindUiState.Resolving -> Column(
+                            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            CircularProgressIndicator()
+                            Text("Looking up…", modifier = Modifier.padding(top = 8.dp))
+                        }
 
-                    is FindUiState.Error -> Text(
-                        "Lookup failed: ${state.message}",
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(top = 16.dp)
-                    )
+                        is FindUiState.PickEpc -> CandidateList(
+                            candidates = state.candidates,
+                            onEpcChosen = onEpcChosen
+                        )
 
-                    // Idle: nothing extra to show below the form.
-                    // Navigating: not rendered here — MainActivity routes to CompassScreen instead.
-                    is FindUiState.Idle, is FindUiState.Navigating -> Unit
+                        is FindUiState.NotFound -> Text(
+                            "No item found for \"${state.epc}\".",
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(top = 16.dp)
+                        )
+
+                        is FindUiState.Invalid -> Text(
+                            "That EPC isn't valid: ${state.reason}",
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(top = 16.dp)
+                        )
+
+                        is FindUiState.Error -> Text(
+                            "Lookup failed: ${state.message}",
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(top = 16.dp)
+                        )
+
+                        // Idle: nothing extra to show below the form.
+                        // Navigating: not rendered here — MainActivity routes to CompassScreen instead.
+                        is FindUiState.Idle, is FindUiState.Navigating -> Unit
+                    }
                 }
             }
         }
@@ -156,8 +175,9 @@ private fun CandidateList(
         style = MaterialTheme.typography.titleMedium,
         modifier = Modifier.padding(top = 16.dp)
     )
-    LazyColumn(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-        items(candidates) { candidate ->
+    // Plain Column (not LazyColumn): this list lives inside a vertically scrolling parent.
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        candidates.forEach { candidate ->
             Card(
                 modifier = Modifier
                     .fillMaxWidth()

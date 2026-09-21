@@ -33,6 +33,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -57,27 +58,38 @@ private const val GAUGE_START_ANGLE = 135f
 private const val GAUGE_SWEEP_RANGE = 270f
 
 @Composable
-fun CompassScreen(state: CompassUiState, targetName: String, modifier: Modifier = Modifier) {
+fun CompassScreen(
+    state: CompassUiState,
+    targetName: String,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     Scaffold(modifier = modifier) { padding ->
         Surface(modifier = Modifier.fillMaxSize().padding(padding)) {
-            Column(
-                modifier = Modifier.fillMaxSize().padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Text(
-                    text = targetName,
-                    style = MaterialTheme.typography.headlineMedium,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp)
-                )
+            Box(modifier = Modifier.fillMaxSize()) {
+                TextButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart).padding(8.dp)) {
+                    Text("← Back")
+                }
+                // Top padding reserves room for the back button so it never overlaps the target name.
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(start = 24.dp, end = 24.dp, bottom = 24.dp, top = 64.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = targetName,
+                        style = MaterialTheme.typography.headlineMedium,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp)
+                    )
 
-                when (state) {
-                    is CompassUiState.Searching -> SearchingContent()
-                    is CompassUiState.NoSignal -> NoSignalContent()
-                    is CompassUiState.Guiding -> GuidingContent(state)
-                    is CompassUiState.TargetAcquired -> TargetAcquiredContent(targetName)
-                    is CompassUiState.Error -> ErrorContent(state.message)
+                    when (state) {
+                        is CompassUiState.Searching -> SearchingContent()
+                        is CompassUiState.NoSignal -> NoSignalContent()
+                        is CompassUiState.Guiding -> GuidingContent(state)
+                        is CompassUiState.TargetAcquired -> TargetAcquiredContent(targetName)
+                        is CompassUiState.Error -> ErrorContent(state.message)
+                    }
                 }
             }
         }

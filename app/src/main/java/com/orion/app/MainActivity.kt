@@ -2,6 +2,7 @@ package com.orion.app
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
@@ -42,7 +43,6 @@ import com.orion.data.enrollment.DataStoreEnrollmentStore
 import com.orion.data.enrollment.HttpEnrollmentVerifier
 import com.orion.data.enrollment.UnconfiguredEnrollmentVerifier
 import com.orion.integrations.fake.FakeEpcLookup
-import com.orion.integrations.fake.FakeRfidReader
 
 /**
  * Minimal, hand-rolled [ViewModelProvider.Factory] — this repo has no DI framework
@@ -143,21 +143,17 @@ private class FindFlowViewModelFactory(
     }
 }
 
-/** A well-formed SGTIN-96 known to [FakeEpcLookup] ("Blue Running Shoe M9"), used only to seed the emulator's fake reader/lookup pair below — not auto-submitted. */
-private const val DEMO_TARGET_EPC = "30245BFB8386AA80000186A1"
-
 /**
  * Find flow entry point.
  *
- * Wires [FindFlowViewModel] to the hardware-free [FakeRfidReader] /
- * [FakeEpcLookup] simulation pair (see integrations/fake) so the flow can be
- * exercised end-to-end on an emulator with no RFID hardware and no real
- * inventory backend: [FakeRfidReader] simulates "walking closer" to the
- * target once navigation starts. The associate drives resolution themselves
+ * Wires [FindFlowViewModel] to [provideRfidReader] (variant-specific: a debug-only mock
+ * reader in src/debug, an honest "unconfigured" reader in src/release) and
+ * [FakeEpcLookup], so the flow runs end-to-end on an emulator with no RFID hardware and
+ * no real inventory backend. The associate drives resolution themselves
  * via [EpcEntryScreen] (typed EPC or search-by-name); nothing is auto-resolved.
  *
- * Replace [FakeRfidReader] / [FakeEpcLookup] with real
- * [com.orion.core.rfid.RfidReader] / [com.orion.core.inventory.EpcLookup]
+ * Replace [FakeEpcLookup] and the release [provideRfidReader] with real
+ * [com.orion.core.inventory.EpcLookup] / [com.orion.core.rfid.RfidReader]
  * implementations once they exist. [FindFlowViewModel], [EpcEntryScreen], and
  * [CompassScreen] do not need to change to support that swap.
  */
@@ -166,14 +162,19 @@ private fun FindScreen() {
     val factory = remember {
         FindFlowViewModelFactory(
             resolveTarget = ResolveTargetUseCase(FakeEpcLookup()),
-            findTag = FindTagUseCase(FakeRfidReader(DEMO_TARGET_EPC))
+            findTag = FindTagUseCase(provideRfidReader())
         )
     }
     val viewModel: FindFlowViewModel = viewModel(factory = factory)
     val state by viewModel.state.collectAsState()
 
     when (val findState = state) {
-        is FindUiState.Navigating -> CompassScreen(findState.compass, findState.targetName)
+        is FindUiState.Navigating -> {
+            // System back returns to a fresh EPC entry screen; on EpcEntryScreen itself
+            // there is no handler, so back keeps its default (exit app).
+            BackHandler(onBack = viewModel::back)
+            CompassScreen(findState.compass, findState.targetName, onBack = viewModel::back)
+        }
         else -> EpcEntryScreen(
             state = findState,
             onResolutionScreenOpened = viewModel::onResolutionScreenOpened,
