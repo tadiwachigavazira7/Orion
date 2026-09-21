@@ -37,7 +37,7 @@ pnpm-debug.*
 .DS_Store
 Thumbs.db
 
-# 🚨 STRICT ENV / SECRET BLOCKING
+# environment files
 .env
 .env.local
 .env.*.local
