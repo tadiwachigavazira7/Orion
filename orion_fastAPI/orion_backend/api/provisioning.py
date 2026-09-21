@@ -32,7 +32,6 @@ async def create_organization(
         id=organization.id,
         organization_code=organization.organization_code,
         name=organization.name,
-        status=organization.status,
         created_at=organization.created_at,
         updated_at=organization.updated_at,
     )
@@ -48,14 +47,12 @@ async def create_site(
     db: AsyncSession = Depends(get_db),
 ) -> SiteResponse:
     site, organization = await provisioning_service.create_site(
-        db, body.organization_code, body.site_code, body.name
+        db, body.organization_code, body.site_code
     )
     return SiteResponse(
         id=site.id,
         organization_code=organization.organization_code,
         site_code=site.site_code,
-        name=site.name,
-        status=site.status,
         created_at=site.created_at,
         updated_at=site.updated_at,
     )

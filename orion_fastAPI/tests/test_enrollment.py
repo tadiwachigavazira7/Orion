@@ -202,3 +202,43 @@ async def test_enrolled_device_is_active(client: AsyncClient, db_session: AsyncS
     device = result.scalar_one()
 
     assert device.status == DeviceStatus.ACTIVE
+
+
+async def test_enrollment_never_queries_nonexistent_organization_status_column(
+    client: AsyncClient, db_session: AsyncSession, engine
+):
+    """The organizations table has no `status` column. Regression for the
+    UndefinedColumnError (HTTP 500) raised when the ORM selected
+    organizations.status. Captures every SQL statement emitted while
+    enrolling and asserts none references it.
+    """
+    from sqlalchemy import event
+
+    await create_organization_and_site(db_session, organization_code="TARGETTEST-001")
+
+    statements: list[str] = []
+
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", capture)
+    try:
+        response = await enroll(client, device_id="PDT-TT", organization_code="TARGETTEST-001")
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture)
+
+    assert response.status_code == 201
+    assert response.json()["organization_code"] == "TARGETTEST-001"
+    org_selects = [s for s in statements if "FROM organizations" in s]
+    assert org_selects, "expected the organization lookup to be captured"
+    assert not any("organizations.status" in s for s in statements)
+
+
+def test_organization_model_columns_match_schema():
+    assert {c.name for c in Organization.__table__.columns} == {
+        "id",
+        "organization_code",
+        "name",
+        "created_at",
+        "updated_at",
+    }

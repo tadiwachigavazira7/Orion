@@ -22,7 +22,10 @@ if config.config_file_name is not None:
 
 # The database URL is never hardcoded in alembic.ini - it comes from the same
 # DATABASE_URL environment variable / .env file the running app uses.
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# A URL already set programmatically (e.g. tests pointing at a scratch
+# database) takes precedence over the environment.
+if not config.get_main_option("sqlalchemy.url"):
+    config.set_main_option("sqlalchemy.url", get_settings().database_url)
 
 target_metadata = Base.metadata
 

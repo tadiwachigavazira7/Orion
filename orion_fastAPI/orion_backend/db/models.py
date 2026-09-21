@@ -14,16 +14,6 @@ class DeviceStatus(str, enum.Enum):
     REVOKED = "REVOKED"
 
 
-class OrganizationStatus(str, enum.Enum):
-    ACTIVE = "ACTIVE"
-    SUSPENDED = "SUSPENDED"
-
-
-class SiteStatus(str, enum.Enum):
-    ACTIVE = "ACTIVE"
-    SUSPENDED = "SUSPENDED"
-
-
 class EnrolledDevice(Base):
     """A PDT device trusted to run Orion. Never stores the plaintext
     enrollment credential — only an Argon2id hash (see services.credential_hasher).
@@ -67,11 +57,6 @@ class Organization(Base):
         String(128), unique=True, nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    status: Mapped[OrganizationStatus] = mapped_column(
-        SAEnum(OrganizationStatus, name="organization_status", native_enum=True),
-        nullable=False,
-        default=OrganizationStatus.ACTIVE,
-    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -98,12 +83,6 @@ class Site(Base):
     site_code: Mapped[str] = mapped_column(String(128), nullable=False)
     organization_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
-    )
-    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    status: Mapped[SiteStatus] = mapped_column(
-        SAEnum(SiteStatus, name="site_status", native_enum=True),
-        nullable=False,
-        default=SiteStatus.ACTIVE,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

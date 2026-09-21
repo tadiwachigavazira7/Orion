@@ -3,7 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from orion_backend.db.models import DeviceStatus, OrganizationStatus, SiteStatus
+from orion_backend.db.models import DeviceStatus
 
 
 class EnrollmentRequest(BaseModel):
@@ -54,7 +54,6 @@ class OrganizationResponse(BaseModel):
     id: UUID
     organization_code: str
     name: str
-    status: OrganizationStatus
     created_at: datetime
     updated_at: datetime
 
@@ -62,14 +61,11 @@ class OrganizationResponse(BaseModel):
 class SiteCreateRequest(BaseModel):
     organization_code: str = Field(min_length=1, max_length=128)
     site_code: str = Field(min_length=1, max_length=128)
-    name: str = Field(min_length=1, max_length=255)
 
 
 class SiteResponse(BaseModel):
     id: UUID
     organization_code: str
     site_code: str
-    name: str | None
-    status: SiteStatus
     created_at: datetime
     updated_at: datetime

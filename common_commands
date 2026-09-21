@@ -5,3 +5,9 @@ Command to enter the PostgreSQL table from WSL:  docker exec -it orion-postgres 
 
 PYTHON FastAPI
 Command to start the FastAPI backend (must be in orion_fastAPI directory): uv run uvicorn orion_backend.main:app --reload
+Command to run tests: uv run pytest 
+Command to end the FastAPI backend: Ctrl + C
+
+
+Android Studio/Emulator: 
+Command to launch the emulator in powershell: & "$env:USERPROFILE\AppData\Local\Android\Sdk\emulator\emulator.exe" -avd Zebra_TC53_58_53e_PDT_Scanner

@@ -63,7 +63,6 @@ async def create_site(
     db: AsyncSession,
     organization_code: str,
     site_code: str,
-    name: str,
 ) -> tuple[Site, Organization]:
     # A site is never auto-created under a nonexistent organization - the
     # organization must already exist via create_organization first.
@@ -79,7 +78,7 @@ async def create_site(
     if existing is not None:
         raise SiteCodeAlreadyExistsError(site_code, organization_code)
 
-    site = Site(site_code=site_code, organization_id=organization.id, name=name)
+    site = Site(site_code=site_code, organization_id=organization.id)
     db.add(site)
     try:
         await db.commit()

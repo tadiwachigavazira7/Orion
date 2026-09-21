@@ -17,7 +17,7 @@ async def test_create_organization_succeeds(client: AsyncClient):
     body = response.json()
     assert body["organization_code"] == "ORG-A"
     assert body["name"] == "Org A"
-    assert body["status"] == "ACTIVE"
+    assert "status" not in body
     assert body["id"]
     assert body["created_at"]
     assert body["updated_at"]
@@ -38,25 +38,25 @@ async def test_create_site_under_existing_organization_succeeds(client: AsyncCli
     assert org_response.status_code == 201
 
     response = await provision_site(
-        client, organization_code="ORG-C", site_code="SITE-C1", name="Site C1"
+        client, organization_code="ORG-C", site_code="SITE-C1"
     )
 
     assert response.status_code == 201
     body = response.json()
     assert body["organization_code"] == "ORG-C"
     assert body["site_code"] == "SITE-C1"
-    assert body["name"] == "Site C1"
-    assert body["status"] == "ACTIVE"
+    assert "name" not in body
+    assert "status" not in body
 
 
 async def test_duplicate_site_code_within_same_organization_is_rejected(client: AsyncClient):
     await provision_organization(client, organization_code="ORG-D", name="Org D")
 
-    first = await provision_site(client, organization_code="ORG-D", site_code="SITE-D1", name="Site D1")
+    first = await provision_site(client, organization_code="ORG-D", site_code="SITE-D1")
     assert first.status_code == 201
 
     second = await provision_site(
-        client, organization_code="ORG-D", site_code="SITE-D1", name="Site D1 Again"
+        client, organization_code="ORG-D", site_code="SITE-D1"
     )
 
     assert second.status_code == 409
@@ -68,10 +68,10 @@ async def test_same_site_code_allowed_under_different_organizations(client: Asyn
     await provision_organization(client, organization_code="ORG-E2", name="Org E2")
 
     first = await provision_site(
-        client, organization_code="ORG-E1", site_code="SHARED-SITE", name="Shared Site"
+        client, organization_code="ORG-E1", site_code="SHARED-SITE"
     )
     second = await provision_site(
-        client, organization_code="ORG-E2", site_code="SHARED-SITE", name="Shared Site"
+        client, organization_code="ORG-E2", site_code="SHARED-SITE"
     )
 
     assert first.status_code == 201
@@ -80,7 +80,7 @@ async def test_same_site_code_allowed_under_different_organizations(client: Asyn
 
 async def test_create_site_under_nonexistent_organization_is_rejected(client: AsyncClient):
     response = await provision_site(
-        client, organization_code="NO-SUCH-ORG", site_code="SITE-X1", name="Site X1"
+        client, organization_code="NO-SUCH-ORG", site_code="SITE-X1"
     )
 
     assert response.status_code == 404
@@ -156,7 +156,7 @@ async def test_concurrent_create_site_race_is_translated_to_409(
     async def attempt() -> tuple[Site, Organization]:
         async with sessionmaker_() as session:
             return await provisioning_service.create_site(
-                session, "ORG-SITE-RACE", "SITE-RACE", "Site Race"
+                session, "ORG-SITE-RACE", "SITE-RACE"
             )
 
     results = await asyncio.gather(attempt(), attempt(), return_exceptions=True)
@@ -175,7 +175,7 @@ async def test_create_site_with_missing_api_key_is_rejected(
     await provision_organization(client, organization_code="ORG-H", name="Org H")
 
     response = await provision_site(
-        client, organization_code="ORG-H", site_code="SITE-H1", name="Site H1", api_key=None
+        client, organization_code="ORG-H", site_code="SITE-H1", api_key=None
     )
 
     assert response.status_code == 401
