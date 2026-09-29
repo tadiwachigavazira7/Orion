@@ -32,10 +32,14 @@ import kotlin.random.Random
  * Simulation parameters.
  *
  * The target RSSI ramps from [startRssi] toward [endRssi] by [step] dB every [intervalMs],
- * then HOLDS at [endRssi] (plus jitter) until scanning stops.
+ * then HOLDS at [endRssi] (plus jitter) until scanning stops. The ramp direction is inferred
+ * from the two endpoints: [startRssi] <= [endRssi] produces a strengthening ("walking closer")
+ * ramp, [startRssi] > [endRssi] produces a weakening ("walking away") ramp. [step] is always a
+ * positive magnitude regardless of direction.
  *
- * @param decoyEpc if set, an observation of this (different) EPC is emitted each tick too,
- *   at [endRssi] (deliberately strong) to prove the pipeline filters to the target.
+ * @param decoyEpc if set, an observation of this (different) EPC is emitted each tick too, at
+ *   the stronger of [startRssi]/[endRssi] (deliberately strong, regardless of ramp direction)
+ *   to prove the pipeline filters to the target.
  * @param emitTarget when false only the decoy is emitted (the "target never seen" case).
  * @param noiseDb jitter amplitude: each RSSI gets a uniform offset in [-noiseDb, +noiseDb].
  */
@@ -54,7 +58,6 @@ data class MockRfidConfig(
         require(step > 0) { "step must be positive" }
         require(intervalMs > 0) { "intervalMs must be positive" }
         require(noiseDb >= 0.0) { "noiseDb must be non-negative" }
-        require(startRssi <= endRssi) { "startRssi must not exceed endRssi (ramp is toward stronger signal)" }
         require(decoyEpc == null || decoyEpc != targetEpc) { "decoyEpc must differ from targetEpc" }
     }
 
@@ -81,6 +84,7 @@ class MockRfidReader(
         scanning.flatMapLatest { if (it) generate() else emptyFlow() }
 
     private fun generate(): Flow<RfidObservation> = flow {
+        val ascending = config.startRssi <= config.endRssi
         var tick = 0L
         var lastTimestamp: Long? = null
         fun nextTimestamp(): Long {
@@ -88,12 +92,20 @@ class MockRfidReader(
             return maxOf(clock(), floor).also { lastTimestamp = it }
         }
         while (true) {
-            val base = minOf(config.startRssi + config.step * tick, config.endRssi.toLong()).toInt()
+            val delta = config.step * tick
+            val base = if (ascending) {
+                minOf(config.startRssi + delta, config.endRssi.toLong())
+            } else {
+                maxOf(config.startRssi - delta, config.endRssi.toLong())
+            }.toInt()
             if (config.emitTarget) {
                 emit(observation(config.targetEpc, base, nextTimestamp()))
             }
-            config.decoyEpc?.let { emit(observation(it, config.endRssi, nextTimestamp())) }
-            if (base < config.endRssi) tick++
+            config.decoyEpc?.let {
+                emit(observation(it, maxOf(config.startRssi, config.endRssi), nextTimestamp()))
+            }
+            val reachedEnd = if (ascending) base >= config.endRssi else base <= config.endRssi
+            if (!reachedEnd) tick++
             delay(config.intervalMs)
         }
     }

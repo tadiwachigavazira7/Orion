@@ -1,6 +1,7 @@
 package com.orion.integrations.mock
 
 import com.orion.core.navigation.NavigationState
+import com.orion.core.navigation.Trend
 import com.orion.core.rfid.RfidObservation
 import com.orion.core.session.FindTagUseCase
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -43,6 +44,18 @@ class MockRfidReaderTest {
         val obs = r.observations.take(14).toList()
         assertEquals(
             listOf(-75, -72, -69, -66, -63, -60, -57, -54, -51, -48, -45, -45, -45, -45),
+            obs.map { it.rawRssi }
+        )
+        assertTrue(obs.all { it.epc == MockRfidConfig.DEFAULT_TARGET_EPC })
+    }
+
+    @Test
+    fun `weakening config ramps -45 to -75 by 3 then holds`() = runTest {
+        val r = reader(MockRfidConfig(startRssi = -45, endRssi = -75, step = 3, noiseDb = 0.0))
+        r.startScanning()
+        val obs = r.observations.take(14).toList()
+        assertEquals(
+            listOf(-45, -48, -51, -54, -57, -60, -63, -66, -69, -72, -75, -75, -75, -75),
             obs.map { it.rawRssi }
         )
         assertTrue(obs.all { it.epc == MockRfidConfig.DEFAULT_TARGET_EPC })
@@ -171,5 +184,26 @@ class MockRfidReaderTest {
         assertTrue(states.isNotEmpty())
         assertNotNull(states.last().proximity)
         assertFalse(states.any { it.targetAcquired })
+    }
+
+    @Test
+    fun `pipeline with a weakening ramp never acquires and reports COLDER`() = runTest {
+        val r = reader(
+            MockRfidConfig(
+                targetEpc = target,
+                startRssi = -50,
+                endRssi = -90,
+                step = 3,
+                decoyEpc = decoy,
+                noiseDb = 0.0
+            )
+        )
+        val states = mutableListOf<NavigationState>()
+        val job = launch { FindTagUseCase(r).find(target).collect { states += it } }
+        advanceTimeBy(60_000)
+        job.cancel()
+        assertTrue(states.isNotEmpty())
+        assertFalse("weakening ramp must never cross the acquisition threshold", states.any { it.targetAcquired })
+        assertTrue("a weakening ramp must surface a COLDER trend", states.any { it.trend == Trend.COLDER })
     }
 }
