@@ -18,6 +18,7 @@ from orion_backend.errors import (
     OrganizationCodeAlreadyExistsError,
     OrganizationNotFoundError,
     SiteCodeAlreadyExistsError,
+    SiteNotFoundError,
 )
 
 
@@ -88,4 +89,25 @@ async def create_site(
         await db.rollback()
         raise SiteCodeAlreadyExistsError(site_code, organization_code) from None
     await db.refresh(site)
+    return site, organization
+
+
+async def list_sites(db: AsyncSession, organization_code: str) -> tuple[list[Site], Organization]:
+    organization = await _resolve_organization(db, organization_code)
+    result = await db.execute(
+        select(Site).where(Site.organization_id == organization.id).order_by(Site.site_code)
+    )
+    return list(result.scalars().all()), organization
+
+
+async def get_site(
+    db: AsyncSession, organization_code: str, site_code: str
+) -> tuple[Site, Organization]:
+    organization = await _resolve_organization(db, organization_code)
+    result = await db.execute(
+        select(Site).where(Site.organization_id == organization.id, Site.site_code == site_code)
+    )
+    site = result.scalar_one_or_none()
+    if site is None:
+        raise SiteNotFoundError(site_code)
     return site, organization

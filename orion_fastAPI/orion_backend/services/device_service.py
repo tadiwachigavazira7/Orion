@@ -7,6 +7,7 @@ kept here, not in the routes.
 """
 
 from datetime import UTC, datetime
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +18,7 @@ from orion_backend.errors import (
     DeviceNotFoundError,
     DeviceRevokedError,
     InvalidCredentialError,
+    SiteIdNotFoundError,
 )
 from orion_backend.services.credential_hasher import CredentialHasher
 
@@ -76,3 +78,16 @@ async def revoke_device(db: AsyncSession, device_id: str) -> EnrolledDevice:
         await db.commit()
         await db.refresh(device)
     return device
+
+
+async def list_devices_for_site(db: AsyncSession, site_id: UUID) -> list[EnrolledDevice]:
+    site = await db.get(Site, site_id)
+    if site is None:
+        raise SiteIdNotFoundError(site_id)
+    result = await db.execute(
+        select(EnrolledDevice)
+        .where(EnrolledDevice.site_id == site_id)
+        .order_by(EnrolledDevice.created_at, EnrolledDevice.device_id)
+        .options(selectinload(EnrolledDevice.site).selectinload(Site.organization))
+    )
+    return list(result.scalars().all())

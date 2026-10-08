@@ -32,14 +32,6 @@ class VerifyDeviceResponse(BaseModel):
     status: DeviceStatus
 
 
-class DeviceStatusResponse(BaseModel):
-    device_id: str
-    organization_code: str
-    site_code: str
-    status: DeviceStatus
-    last_verified_at: datetime | None
-
-
 class ErrorResponse(BaseModel):
     detail: str
     error_code: str
@@ -69,3 +61,25 @@ class SiteResponse(BaseModel):
     site_code: str
     created_at: datetime
     updated_at: datetime
+
+
+class AdminDeviceResponse(BaseModel):
+    """Admin view of a device. Deliberately has no credential or hash field."""
+
+    device_id: str
+    site_code: str
+    organization_code: str
+    status: DeviceStatus
+    created_at: datetime
+    updated_at: datetime
+    last_verified_at: datetime | None
+
+
+class ProvisioningInfoResponse(BaseModel):
+    """What an operator types into a PDT. Codes are not secrets; the per-device
+    credential is generated at enrollment and never appears here."""
+
+    organization_code: str
+    organization_name: str
+    site_code: str
+    site_id: UUID

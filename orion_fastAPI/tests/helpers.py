@@ -72,3 +72,11 @@ async def provision_site(
         json={"organization_code": organization_code, "site_code": site_code},
         headers=headers,
     )
+
+
+def admin_headers(api_key: str = DEFAULT_ADMIN_API_KEY) -> dict[str, str]:
+    return {"X-Admin-Api-Key": api_key}
+
+
+async def deactivate_device(client: AsyncClient, device_id: str) -> Response:
+    return await client.post(f"/admin/devices/{device_id}/deactivate", headers=admin_headers())

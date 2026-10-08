@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orion_backend.db.models import DeviceStatus, EnrolledDevice, Organization, Site
-from tests.helpers import DEFAULT_ORGANIZATION_CODE, DEFAULT_SITE_CODE, create_organization_and_site, enroll
+from tests.helpers import DEFAULT_ORGANIZATION_CODE, DEFAULT_SITE_CODE, create_organization_and_site, deactivate_device, enroll
 
 
 async def test_new_device_enrolls_successfully(client: AsyncClient, db_session: AsyncSession):
@@ -115,7 +115,7 @@ async def test_reenrollment_of_revoked_device_id_is_rejected(
     first = await enroll(client, device_id="PDT-2b")
     assert first.status_code == 201
 
-    revoke_response = await client.delete("/enrolled_devices/PDT-2b")
+    revoke_response = await deactivate_device(client, "PDT-2b")
     assert revoke_response.status_code == 200
 
     db_session.expire_all()

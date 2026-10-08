@@ -65,6 +65,14 @@ class SiteNotFoundError(OrionDeviceError):
         super().__init__(f"Site '{site_code}' was not found.")
 
 
+class SiteIdNotFoundError(OrionDeviceError):
+    error_code = "site_not_found"
+    http_status = 404
+
+    def __init__(self, site_id: object):
+        super().__init__(f"Site with id '{site_id}' was not found.")
+
+
 class SiteOrganizationMismatchError(OrionDeviceError):
     """The site code exists, but not under the given organization.
 
