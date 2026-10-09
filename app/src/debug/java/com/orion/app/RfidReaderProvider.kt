@@ -10,7 +10,9 @@ import com.orion.integrations.mock.MockRfidReader
  *
  * Uses a well-formed SGTIN-96 EPC known to FakeEpcLookup, because ResolveTargetUseCase
  * rejects non-SGTIN EPCs (e.g. E28068...) as Invalid before navigation can start.
- * A different, strong decoy EPC is interleaved to exercise filter-to-target.
+ * Every catalog tag in FakeEpcLookup (M9 = [MOCK_TARGET_EPC], M10 = [MOCK_ADDITIONAL_TARGET_EPC])
+ * is approached with the same ramp, so searching either one animates. A strong decoy EPC that is
+ * NOT in the catalog is interleaved to exercise filter-to-target.
  *
  * [MOCK_SIMULATE_WALKING_AWAY] is a manual, compile-time toggle for developers verifying the
  * emulator by eye: flip it to `true`, rebuild, and the mock ramps the signal from strong to
@@ -18,8 +20,9 @@ import com.orion.integrations.mock.MockRfidReader
  * NoSignal path in CompassScreen. Leave it `false` for the default "walking closer" scenario.
  */
 internal const val MOCK_TARGET_EPC = "30245BFB8386AA80000186A1"
-internal const val MOCK_DECOY_EPC = "30245BFB8386AAC0000186A2"
-private const val MOCK_SIMULATE_WALKING_AWAY = false
+internal const val MOCK_ADDITIONAL_TARGET_EPC = "30245BFB8386AAC0000186A2"
+internal const val MOCK_DECOY_EPC = "30245BFB8386AAE0000186A3"
+private const val MOCK_SIMULATE_WALKING_AWAY = true
 
 internal fun provideRfidReader(): RfidReader = MockRfidReader(
     if (MOCK_SIMULATE_WALKING_AWAY) {
@@ -32,6 +35,7 @@ internal fun provideRfidReader(): RfidReader = MockRfidReader(
             endRssi = -90,
             step = 3,
             intervalMs = 500,
+            additionalTargetEpcs = listOf(MOCK_ADDITIONAL_TARGET_EPC),
             decoyEpc = MOCK_DECOY_EPC
         )
     } else {
@@ -43,6 +47,7 @@ internal fun provideRfidReader(): RfidReader = MockRfidReader(
             endRssi = -30,
             step = 3,
             intervalMs = 500,
+            additionalTargetEpcs = listOf(MOCK_ADDITIONAL_TARGET_EPC),
             decoyEpc = MOCK_DECOY_EPC
         )
     }

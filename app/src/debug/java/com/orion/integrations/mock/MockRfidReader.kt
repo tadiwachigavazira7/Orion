@@ -37,10 +37,15 @@ import kotlin.random.Random
  * ramp, [startRssi] > [endRssi] produces a weakening ("walking away") ramp. [step] is always a
  * positive magnitude regardless of direction.
  *
- * @param decoyEpc if set, an observation of this (different) EPC is emitted each tick too, at
+ * @param additionalTargetEpcs further EPCs that are approached exactly like [targetEpc] (same
+ *   ramp and jitter model, one observation per EPC per tick), so a scene with several known
+ *   catalog tags animates whichever one is searched. Must be unique and differ from [targetEpc].
+ * @param decoyEpc if set, an observation of this EPC is emitted each tick too, at
  *   the stronger of [startRssi]/[endRssi] (deliberately strong, regardless of ramp direction)
- *   to prove the pipeline filters to the target.
- * @param emitTarget when false only the decoy is emitted (the "target never seen" case).
+ *   to prove the pipeline filters to the target. Must differ from [targetEpc] and every
+ *   entry of [additionalTargetEpcs].
+ * @param emitTarget when false the target and additional targets are not emitted, only the
+ *   decoy (the "target never seen" case).
  * @param noiseDb jitter amplitude: each RSSI gets a uniform offset in [-noiseDb, +noiseDb].
  */
 data class MockRfidConfig(
@@ -52,13 +57,20 @@ data class MockRfidConfig(
     val noiseDb: Double = 1.0,
     val decoyEpc: String? = null,
     val emitTarget: Boolean = true,
-    val readerId: String = "mock-reader"
+    val readerId: String = "mock-reader",
+    val additionalTargetEpcs: List<String> = emptyList()
 ) {
     init {
         require(step > 0) { "step must be positive" }
         require(intervalMs > 0) { "intervalMs must be positive" }
         require(noiseDb >= 0.0) { "noiseDb must be non-negative" }
         require(decoyEpc == null || decoyEpc != targetEpc) { "decoyEpc must differ from targetEpc" }
+        require(decoyEpc == null || decoyEpc !in additionalTargetEpcs) {
+            "decoyEpc must differ from all additionalTargetEpcs"
+        }
+        require(targetEpc !in additionalTargetEpcs && additionalTargetEpcs.distinct().size == additionalTargetEpcs.size) {
+            "additionalTargetEpcs must be unique and differ from targetEpc"
+        }
     }
 
     companion object {
@@ -100,6 +112,9 @@ class MockRfidReader(
             }.toInt()
             if (config.emitTarget) {
                 emit(observation(config.targetEpc, base, nextTimestamp()))
+                config.additionalTargetEpcs.forEach {
+                    emit(observation(it, base, nextTimestamp()))
+                }
             }
             config.decoyEpc?.let {
                 emit(observation(it, maxOf(config.startRssi, config.endRssi), nextTimestamp()))

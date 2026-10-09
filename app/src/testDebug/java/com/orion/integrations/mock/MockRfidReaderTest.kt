@@ -154,7 +154,81 @@ class MockRfidReaderTest {
         assertTrue(r.observations.take(8).toList().all { it.epc == decoy })
     }
 
+    @Test
+    fun `additional targets ramp like the target instead of holding strong`() = runTest {
+        val r = reader(
+            MockRfidConfig(targetEpc = target, additionalTargetEpcs = listOf(decoy), noiseDb = 0.0)
+        )
+        r.startScanning()
+        val obs = r.observations.take(8).toList()
+        assertEquals(listOf(target, decoy, target, decoy), obs.take(4).map { it.epc })
+        val extra = obs.filter { it.epc == decoy }.map { it.rawRssi }
+        assertEquals(listOf(-75, -72, -69, -66), extra)
+        assertEquals(obs.filter { it.epc == target }.map { it.rawRssi }, extra)
+        assertTrue(obs.map { it.timestamp }.zipWithNext().all { (a, b) -> b > a })
+    }
+
+    @Test
+    fun `additional targets are not emitted when emitTarget is false`() = runTest {
+        val unrelated = "30245BFB8386AAE0000186A3"
+        val r = reader(
+            MockRfidConfig(
+                targetEpc = target, additionalTargetEpcs = listOf(decoy),
+                decoyEpc = unrelated, emitTarget = false
+            )
+        )
+        r.startScanning()
+        assertTrue(r.observations.take(6).toList().all { it.epc == unrelated })
+    }
+
+    @Test
+    fun `a fresh collection after stop and start restarts the additional target ramp`() = runTest {
+        val r = reader(
+            MockRfidConfig(targetEpc = target, additionalTargetEpcs = listOf(decoy), noiseDb = 0.0)
+        )
+        r.startScanning()
+        val first = r.observations.take(20).toList().filter { it.epc == decoy }
+        assertTrue(first.last().rawRssi!! > first.first().rawRssi!!)
+        r.stopInventory().getOrThrow()
+        r.startInventory().getOrThrow()
+        val second = r.observations.take(6).toList().filter { it.epc == decoy }
+        assertEquals(-75, second.first().rawRssi)
+    }
+
+    @Test
+    fun `decoy colliding with an additional target is rejected`() {
+        val e = runCatching {
+            MockRfidConfig(targetEpc = target, additionalTargetEpcs = listOf(decoy), decoyEpc = decoy)
+        }.exceptionOrNull()
+        assertTrue(e is IllegalArgumentException)
+    }
+
+    @Test
+    fun `additional targets must differ from the target`() {
+        val e = runCatching {
+            MockRfidConfig(targetEpc = target, additionalTargetEpcs = listOf(target))
+        }.exceptionOrNull()
+        assertTrue(e is IllegalArgumentException)
+    }
+
     // ---- pipeline-level: mock -> FindTagUseCase (filter + NavigationEngine) ----
+
+    @Test
+    fun `provider scene approaches M10 gradually before acquiring, and restarts on re-search`() = runTest {
+        val r = com.orion.app.provideRfidReader()
+        r.connect().getOrThrow()
+        r.startInventory().getOrThrow()
+        val m10 = com.orion.app.MOCK_ADDITIONAL_TARGET_EPC
+        repeat(2) {
+            val states = mutableListOf<NavigationState>()
+            val job = launch { FindTagUseCase(r).find(m10).collect { states += it } }
+            advanceTimeBy(60_000)
+            job.cancel()
+            val firstAcquired = states.indexOfFirst { it.targetAcquired }
+            assertTrue("M10 must reach TargetAcquired", firstAcquired > 0)
+            assertFalse("first state must not be acquired", states.first().targetAcquired)
+        }
+    }
 
     @Test
     fun `pipeline reaches TargetAcquired when the ramp gets strong enough`() = runTest {
