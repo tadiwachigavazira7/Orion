@@ -110,3 +110,6 @@ __pycache__/
 *.egg-info/
 .coverage
 htmlcov/
+
+# Claude Code stop-hook state
+.claude/.stop-checks/

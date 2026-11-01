@@ -630,17 +630,20 @@ If the actual API is unknown, identify the missing information.
 
 20. Backend
 
-Do not introduce an Orion backend unless the current feature actually requires one.
+Orion has one backend: orion_fastAPI/ (FastAPI + async SQLAlchemy + PostgreSQL + Alembic). Its only job is PDT device enrollment, verification, and revocation (organizations, sites, enrolled_devices). See CLAUDE.md §16 for its rules.
 
-The current Orion architecture does not require:
+When working in orion_fastAPI/:
 
-Supabase
-PostgreSQL
-RLS
-Supabase Edge Functions
-Supabase Storage
+Keep routes thin (api/); put logic in services/
+Ship an Alembic migration with every model change; never edit an applied migration
+Store only Argon2id credential hashes; never log credentials
+Read config from environment/.env only (see .env.example)
+Use the explicit error types in errors.py
+Add tests in orion_fastAPI/tests/ (they need the Docker test Postgres, TEST_DATABASE_URL)
 
-unless a future requirement explicitly introduces a need for them.
+Do not expand the backend beyond enrollment, and do not move inventory/EPC data or RFID/localization processing into it, unless a concrete requirement says so.
+
+Do not introduce Supabase, another database, or another backend service.
 
 Do not recreate infrastructure that the retailer's existing systems already provide.
 
