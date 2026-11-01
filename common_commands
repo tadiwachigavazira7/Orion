@@ -5,3 +5,8 @@ Command to enter the PostgreSQL table from WSL:  docker exec -it orion-postgres 
 
 PYTHON FastAPI
 Command to start the FastAPI backend (must be in orion_fastAPI directory): uv run uvicorn orion_backend.main:app --reload
+
+
+VS Code PDT Device Emulator:
+Command to run the emulator straight from VS Code (Library Workstation):  & "C:\Android\Sdk\emulator\emulator.exe" -avd Orion_PDT
+Command to stop running the emulator:  & "C:\Android\Sdk\platform-tools\adb.exe" emu kill
