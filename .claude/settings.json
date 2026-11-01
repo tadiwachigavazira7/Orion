@@ -10,10 +10,10 @@
       "Glob",
       "LS",
       "Grep",
-      "Bash(npm run lint)",
-      "Bash(npm run typecheck)",
-      "Bash(npm run test)",
-      "Bash(npm run format)"
+      "Bash(./gradlew test)",
+      "Bash(./gradlew assembleDebug)",
+      "Bash(./gradlew --quiet test)",
+      "Bash(uv run pytest *)"
     ]
   },
 
@@ -29,63 +29,23 @@
           },
           {
             "type": "command",
-            "command": "echo 'React + TypeScript + Supabase + Stripe'"
+            "command": "echo 'Kotlin/Android (Compose) + FastAPI enrollment backend (PostgreSQL) - see CLAUDE.md'"
           }
         ]
       }
-    ],
-
-    "PreToolUse": [
-
-      {
-        "matcher": "Edit|Write|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "echo 'Reviewing edit...'"
-          }
-        ]
-      }
-
-    ],
-
-    "PostToolUse": [
-
-      {
-        "matcher": "Edit|Write|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "npm run format || true"
-          }
-        ]
-      }
-
     ],
 
     "Stop": [
-
       {
         "hooks": [
-
           {
             "type": "command",
-            "command": "npm run typecheck"
-          },
-
-          {
-            "type": "command",
-            "command": "npm run lint"
-          },
-
-          {
-            "type": "command",
-            "command": "npm test -- --runInBand || true"
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-checks.sh\"",
+            "timeout": 600,
+            "statusMessage": "Running tests for changed code..."
           }
-
         ]
       }
-
     ]
 
   }

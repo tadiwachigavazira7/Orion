@@ -16,7 +16,9 @@ Orion is now a **hardware-agnostic RFID software layer** that runs directly on t
 
 **This is a ground-up Kotlin/Android build.**
 
-> Any prior Orion prototype built on React Native, Expo, TypeScript, FastAPI, or Supabase is **deprecated** and is not the reference for this codebase. Do not carry patterns, assumptions, or code from it into the Kotlin/Android application. If you find yourself reusing a decision from the old stack, stop and re-justify it against this document.
+> Any prior Orion prototype built on React Native, Expo, TypeScript, or Supabase is **deprecated** and is not the reference for this codebase. Do not carry patterns, assumptions, or code from it into the Kotlin/Android application. If you find yourself reusing a decision from the old stack, stop and re-justify it against this document.
+>
+> **Exception:** the current `orion_fastAPI/` service is **not** part of the deprecated prototype. It is a new, deliberately narrow device-enrollment backend (see §16).
 
 When this file and older code disagree, **this file wins.**
 
@@ -126,6 +128,16 @@ Potential integrations include:
 * Other RFID vendors
 
 Vendor-specific SDKs must remain isolated inside vendor integration modules.
+
+## Backend (device enrollment only — see §16)
+
+* Python 3.12, FastAPI, Uvicorn
+* SQLAlchemy 2.0 (async) + asyncpg → PostgreSQL
+* Alembic for migrations
+* Pydantic / pydantic-settings for schemas and config
+* argon2-cffi for credential hashing
+* pytest + pytest-asyncio + httpx (aiosqlite for tests)
+* `uv` for dependency management
 
 ## External Systems
 
@@ -415,9 +427,44 @@ Reads from the hardware *may* start earlier as an optional latency optimization 
 
 # 16. Backend
 
-Orion currently does **not** require a dedicated backend. Do not introduce one merely because a conventional architecture would include it. The retailer's existing systems own the data/backend functionality they already provide.
+Orion has **one** backend service, `orion_fastAPI/`, and it has a single, concrete job: **PDT device enrollment, verification, and revocation.** It answers "is this scanner trusted to run Orion, and for which retailer site?"
 
-A dedicated backend may become appropriate later for: configuration, device management, deployment, analytics, telemetry, remote config, authentication, cloud-based localization, cross-device sync — **only** when there is a concrete product requirement.
+## What it owns
+
+```text
+organizations     → retailer tenant, identified by a unique organization_code
+sites             → store/warehouse within an organization (site_code unique per org)
+enrolled_devices  → a PDT trusted to run Orion, bound to a site; ACTIVE or REVOKED
+```
+
+Endpoints live in `orion_backend/api/` (`enrollment.py`, `devices.py`); business logic lives in `orion_backend/services/`; routes stay thin.
+
+## What it must NOT own
+
+* Inventory, product, SKU, or EPC data — the retailer's systems remain the source of truth (§15, §17). EPC validation goes through `EpcLookup`, not this backend.
+* RFID observations, signal processing, localization, or navigation — that runs **on device** (§28).
+* Employee identity/HR data beyond what enrollment strictly requires.
+
+Expanding the backend beyond enrollment (configuration, analytics, telemetry, remote config, etc.) requires a concrete product requirement — do not grow it speculatively.
+
+## Backend rules
+
+* **Credentials:** never store a plaintext enrollment credential — only an Argon2id hash (`services/credential_hasher.py`). Never log credentials.
+* **Config:** all settings come from environment / `.env` via `config.py`; see `.env.example`. Never hardcode connection strings or secrets.
+* **Schema changes:** every model change ships with an Alembic migration in `alembic/versions/`. Never edit an already-applied migration.
+* **Errors:** use the explicit error types in `errors.py`; do not return bare `None`/empty bodies to signal failure (§22 applies here too).
+* **Tests:** non-trivial endpoint/service changes need tests in `orion_fastAPI/tests/`.
+* **Dev data:** `scripts/seed_dev_data.py` seeds local data; it must never run against production.
+
+## Android ↔ backend seam
+
+The Android app talks to the backend only through the enrollment seam in `com.orion.core.enrollment` (domain) and `com.orion.data.enrollment` (implementations):
+
+* `HttpEnrollmentVerifier` calls the `/enrollment` endpoint at `BuildConfig.ENROLLMENT_BASE_URL`.
+* Debug builds default to the emulator host alias `10.0.2.2`, with cleartext allowed **only** for that host via the debug network security config.
+* Release builds have an empty base URL, so `UnconfiguredEnrollmentVerifier` is the honest fallback — an explicit "not configured" state, never a fake success.
+
+Core and domain code depend on the enrollment interfaces, never on HTTP details.
 
 ---
 
@@ -472,6 +519,22 @@ app/
         │   │   └── ...
         │   └── data/
         └── res/
+```
+
+The backend lives alongside the app:
+
+```text
+orion_fastAPI/
+├── orion_backend/
+│   ├── api/          # thin FastAPI routers
+│   ├── services/     # enrollment / device / credential logic
+│   ├── db/           # SQLAlchemy models and session
+│   ├── schemas.py    # Pydantic request/response models
+│   ├── errors.py     # explicit error types
+│   └── config.py     # env-driven settings
+├── alembic/          # migrations
+├── scripts/          # dev tooling (e.g. seed_dev_data.py)
+└── tests/
 ```
 
 The exact structure may evolve. Do not create folders just to satisfy a theoretical architecture.
@@ -595,9 +658,9 @@ Do NOT:
 * Hardcode credentials or secrets
 * Create a duplicate inventory system without justification
 * Guess external API behavior or hardcode an unknown API shape into core logic
-* Introduce a dedicated backend without a concrete requirement
-* Introduce Supabase or another database without a concrete requirement
-* Carry over patterns from the deprecated RN/FastAPI/Supabase prototype (see §0)
+* Introduce an additional backend, or expand `orion_fastAPI/` beyond device enrollment, without a concrete requirement (see §16)
+* Introduce Supabase or another database without a concrete requirement (the enrollment Postgres DB is the only sanctioned one)
+* Carry over patterns from the deprecated RN/Expo/Supabase prototype (see §0)
 * Over-engineer the MVP or add dependencies without justification
 * Build infrastructure before validating the core product
 

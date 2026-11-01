@@ -28,9 +28,14 @@ The core value is the **software intelligence layer**, not hardware. Orion integ
 
 ## Status
 
-This repository is an in-progress **Kotlin/Android rebuild**.
+This repository is an in-progress **Kotlin/Android rebuild**, currently in the **testing phase** against a local PostgreSQL test database running in Docker.
 
-> Orion was previously prototyped as a React Native / Expo / Supabase application. That prototype is **deprecated** and has been removed. Do not reintroduce React Native, Expo, TypeScript, or a backend/database without a concrete, documented requirement. See [`CLAUDE.md`](./CLAUDE.md).
+It contains two parts:
+
+- **`app/`** — the Android/PDT application (Kotlin, Jetpack Compose).
+- **`orion_fastAPI/`** — a deliberately narrow backend for **PDT device enrollment, verification, and revocation**. It answers "is this scanner trusted to run Orion, and for which retailer site?" It does not hold inventory, EPC, or RFID data; that stays with the retailer's systems and on the device.
+
+> Orion was previously prototyped as a React Native / Expo / Supabase application. That prototype is **deprecated** and has been removed. Do not reintroduce React Native, Expo, TypeScript, or Supabase, and do not grow the backend beyond enrollment without a concrete, documented requirement. See [`CLAUDE.md`](./CLAUDE.md).
 
 ---
 
@@ -43,6 +48,14 @@ This repository is an in-progress **Kotlin/Android rebuild**.
 - **Target:** Android / enterprise PDT devices
 
 RFID hardware is integrated through a vendor abstraction layer (Zebra, Impinj, …), with each vendor confined to its own adapter module.
+
+**Enrollment backend (`orion_fastAPI/`)**
+
+- **Language:** Python 3.12
+- **API:** FastAPI + Uvicorn
+- **Database:** PostgreSQL via async SQLAlchemy 2.0 + asyncpg, migrations with Alembic
+- **Credentials:** Argon2id hashes only (never plaintext)
+- **Tooling:** `uv` for dependencies, pytest for tests
 
 ---
 
@@ -74,21 +87,34 @@ The full engineering standards, architectural rules, and rationale live in [`CLA
 ```
 app/
 └── src/
-    └── main/
-        ├── java/.../
-        │   ├── ui/              # Jetpack Compose screens + state
-        │   ├── domain/          # vendor-neutral models
-        │   ├── navigation/      # navigation engine
-        │   ├── localization/    # proximity / direction estimation
-        │   ├── signalprocessing/# RSSI filtering
-        │   ├── rfid/            # RfidReader boundary, observations
-        │   ├── inventory/       # EPC resolution / validation seam
-        │   ├── integrations/    # vendor adapters
-        │   │   ├── zebra/
-        │   │   ├── impinj/
-        │   │   └── fake/        # hardware-free reader + lookup for dev/tests
-        │   └── session/         # find-and-navigate use cases
-        └── res/                 # drawables, adaptive icons, etc.
+    ├── main/
+    │   ├── java/com/orion/
+    │   │   ├── app/                 # Compose screens, ViewModels, MainActivity
+    │   │   ├── core/                # vendor-neutral domain logic
+    │   │   │   ├── enrollment/      # device enrollment use cases + interfaces
+    │   │   │   ├── inventory/       # EPC resolution / validation seam
+    │   │   │   ├── navigation/      # navigation engine
+    │   │   │   ├── rfid/            # RfidReader boundary, observations
+    │   │   │   └── session/         # find-and-navigate use cases
+    │   │   ├── data/
+    │   │   │   └── enrollment/      # HTTP verifier, DataStore-backed enrollment store
+    │   │   └── integrations/        # vendor adapters
+    │   │       ├── zebra/
+    │   │       ├── impinj/
+    │   │       └── fake/            # hardware-free reader + lookup for dev/tests
+    │   └── res/                     # drawables, adaptive icons, etc.
+    ├── debug/                       # debug-only manifest + network security config
+    └── test/                        # JVM unit tests
+
+orion_fastAPI/
+├── orion_backend/
+│   ├── api/                         # thin FastAPI routers (enrollment, devices)
+│   ├── services/                    # enrollment / device / credential logic
+│   ├── db/                          # SQLAlchemy models and session
+│   ├── schemas.py, errors.py, config.py
+├── alembic/                         # database migrations
+├── scripts/seed_dev_data.py         # seeds a test organization + site
+└── tests/                           # pytest suite (needs the test Postgres)
 ```
 
 Structure will evolve; folders are created when they earn their place, not to satisfy a theoretical layout.
@@ -97,23 +123,67 @@ Structure will evolve; folders are created when they earn their place, not to sa
 
 ## Getting started
 
-> Scaffolding is in progress. This section will firm up as the Gradle project lands.
-
 **Prerequisites**
-- Android Studio (latest stable)
-- JDK 17+
-- An Android device or emulator (a physical PDT scanner is **not** required for core development — see below)
+- Android Studio (latest stable), JDK 17+, Android SDK
+- An Android emulator or device (a physical PDT scanner is **not** required for core development; see below)
+- Python 3.12 and [`uv`](https://docs.astral.sh/uv/)
+- Docker Desktop (for the local PostgreSQL)
 
-**Build & run**
+### 1. Start PostgreSQL (Docker)
+
+The test phase runs against a local Postgres container named `orion-postgres`:
+
 ```bash
-./gradlew assembleDebug        # build
-./gradlew installDebug         # install to a connected device/emulator
+docker start orion-postgres            # start the existing container
+docker ps                              # confirm it's running
+docker exec -it orion-postgres psql -U orion   # optional: open a psql shell
 ```
 
-**Run the tests**
+### 2. Run the enrollment backend
+
 ```bash
-./gradlew test                 # unit tests (no hardware needed)
+cd orion_fastAPI
+cp .env.example .env                   # then edit DATABASE_URL if needed; never commit .env
+uv sync                                # install dependencies
+uv run alembic upgrade head            # apply migrations
+uv run python scripts/seed_dev_data.py # seed TEST-ORG-001 / TEST-SITE-001 (dev only)
+uv run uvicorn orion_backend.main:app --reload
 ```
+
+The API listens on `http://localhost:8000`.
+
+### 3. Build and run the Android app
+
+```bash
+./gradlew assembleDebug                # build
+./gradlew installDebug                 # install to a running emulator/device
+```
+
+To start the emulator from the command line:
+
+```powershell
+& "C:\Android\Sdk\emulator\emulator.exe" -avd Orion_PDT
+& "C:\Android\Sdk\platform-tools\adb.exe" emu kill      # stop it
+```
+
+Debug builds talk to the backend at `http://10.0.2.2:8000` (the emulator's alias for the host machine). Cleartext HTTP is allowed **only** for that host, and only in debug. To point a physical device at your machine, override the URL:
+
+```bash
+./gradlew installDebug -PORION_ENROLLMENT_BASE_URL=http://<your-lan-ip>:8000
+```
+
+Release builds have no backend URL configured and report enrollment as "not configured" rather than faking success.
+
+### Run the tests
+
+```bash
+./gradlew test                         # Android unit tests (no hardware or backend needed)
+
+cd orion_fastAPI
+uv run pytest                          # backend tests (needs the test Postgres running)
+```
+
+Backend tests use `TEST_DATABASE_URL`, which defaults to `postgresql+asyncpg://orion:orion@localhost:55432/orion_test`. Set it if your test database is elsewhere. If Docker isn't running, every backend test fails with a connection error.
 
 ---
 
@@ -145,3 +215,4 @@ Before writing code, read [`CLAUDE.md`](./CLAUDE.md). It defines the architectur
 - Model loading / error / no-signal / success as distinct, exhaustive states.
 - Don't ship placeholder or empty output as if it were real behavior.
 - Add meaningful tests for non-trivial logic; don't guess external SDK or API behavior.
+- Backend model changes ship with an Alembic migration. Never commit `.env` or real credentials.
