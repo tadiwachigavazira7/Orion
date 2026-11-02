@@ -3,28 +3,31 @@
 // ============================================================
 package com.orion.data.enrollment
 
+import com.orion.core.enrollment.EnrollmentCredential
 import com.orion.core.enrollment.EnrollmentRequest
 import com.orion.core.enrollment.EnrollmentResult
 import com.orion.core.enrollment.EnrollmentVerifier
+import com.orion.core.enrollment.VerificationResult
 
 /**
- * Intentional placeholder [EnrollmentVerifier], NOT a stub to "fill in later" silently.
+ * Defensive runtime fallback used only when a build has no usable
+ * `BuildConfig.ENROLLMENT_BASE_URL` (see MainActivity). Release builds cannot be
+ * produced without a valid https URL (app/build.gradle.kts validation), so in
+ * practice this guards misconfigured custom/debug builds.
  *
- * No real enterprise enrollment backend exists yet, and this codebase must never guess
- * or invent that API contract (CLAUDE.md §15, §22). This implementation always returns
- * [EnrollmentResult.Failure] and can never return [EnrollmentResult.Approved] — this is
- * what makes the missing backend dependency visible at runtime through the UI's error
- * state, instead of silently faking a successful enrollment.
- *
- * A real EnrollmentVerifier implementation must be supplied once the customer's
- * enterprise enrollment API is known (see the coding report's "Backend/service
- * dependencies" section for what that API needs to provide).
+ * It can never fake success: enrollment always returns [EnrollmentResult.Failure]
+ * and verification always returns [VerificationResult.Unavailable] (NOT a denial,
+ * so a correctly enrolled device keeps only its server-issued offline allowance).
  */
 class UnconfiguredEnrollmentVerifier : EnrollmentVerifier {
-    override suspend fun verify(request: EnrollmentRequest): EnrollmentResult =
-        EnrollmentResult.Failure(
-            "No enrollment backend is configured for this build. A real EnrollmentVerifier " +
-                "must be integrated with the customer's enterprise enrollment API before " +
-                "production enrollment can succeed."
-        )
+    override suspend fun enroll(request: EnrollmentRequest): EnrollmentResult =
+        EnrollmentResult.Failure(NOT_CONFIGURED)
+
+    override suspend fun verify(credential: EnrollmentCredential): VerificationResult =
+        VerificationResult.Unavailable(NOT_CONFIGURED)
+
+    private companion object {
+        const val NOT_CONFIGURED =
+            "No enrollment backend URL is configured for this build of Orion."
+    }
 }

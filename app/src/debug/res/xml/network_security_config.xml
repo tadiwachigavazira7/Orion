@@ -8,9 +8,10 @@
 
   This file lives under src/debug/ ONLY: it is merged into the debug variant's
   manifest and has no effect on release builds, which keep the platform
-  default (cleartext blocked entirely) and additionally ship an empty
-  ENROLLMENT_BASE_URL (see MainActivity), so release never attempts a
-  cleartext enrollment call in the first place.
+  default (cleartext blocked entirely). Release builds additionally refuse to
+  build unless ORION_RELEASE_ENROLLMENT_BASE_URL is a valid https URL (see
+  validateReleaseEnrollmentBaseUrl in app/build.gradle.kts), so release never
+  attempts a cleartext enrollment/verification call.
 -->
 <network-security-config>
     <domain-config cleartextTrafficPermitted="true">

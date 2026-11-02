@@ -1,5 +1,6 @@
 package com.orion.app
 
+import com.orion.core.enrollment.FakeDeviceAccessGate
 import com.orion.core.inventory.EpcLookup
 import com.orion.core.inventory.EpcTarget
 import com.orion.core.inventory.FindInput
@@ -59,7 +60,8 @@ class FindFlowViewModelTest {
     fun `resolved epc reaches Navigating carrying the fake lookup's display name`() {
         val viewModel = FindFlowViewModel(
             ResolveTargetUseCase(FakeEpcLookup()),
-            FindTagUseCase(FakeRfidReader(KNOWN_EPC))
+            FindTagUseCase(FakeRfidReader(KNOWN_EPC)),
+            FakeDeviceAccessGate()
         )
 
         viewModel.onFind(FindInput.TypedEpc(KNOWN_EPC))
@@ -82,7 +84,8 @@ class FindFlowViewModelTest {
         // non-eager dispatcher with an active collector.
         val viewModel = FindFlowViewModel(
             ResolveTargetUseCase(FakeEpcLookup()),
-            FindTagUseCase(FakeRfidReader(KNOWN_EPC))
+            FindTagUseCase(FakeRfidReader(KNOWN_EPC)),
+            FakeDeviceAccessGate()
         )
 
         viewModel.onFind(FindInput.TypedEpc(KNOWN_EPC))
@@ -101,7 +104,8 @@ class FindFlowViewModelTest {
         // pre-navigation FindUiState.Error used for resolution/lookup failures.
         val viewModel = FindFlowViewModel(
             ResolveTargetUseCase(FakeEpcLookup()),
-            FindTagUseCase(FailingRfidReader())
+            FindTagUseCase(FailingRfidReader()),
+            FakeDeviceAccessGate()
         )
 
         viewModel.onFind(FindInput.TypedEpc(KNOWN_EPC))
@@ -127,7 +131,8 @@ class FindFlowViewModelTest {
         }
         val viewModel = FindFlowViewModel(
             ResolveTargetUseCase(failingLookup),
-            FindTagUseCase(FakeRfidReader(KNOWN_EPC))
+            FindTagUseCase(FakeRfidReader(KNOWN_EPC)),
+            FakeDeviceAccessGate()
         )
 
         viewModel.onFind(FindInput.TypedEpc(KNOWN_EPC))
@@ -155,7 +160,8 @@ class FindFlowViewModelTest {
 
         val viewModel = FindFlowViewModel(
             ResolveTargetUseCase(FakeEpcLookup()),
-            FindTagUseCase(FakeRfidReader(KNOWN_EPC))
+            FindTagUseCase(FakeRfidReader(KNOWN_EPC)),
+            FakeDeviceAccessGate()
         )
 
         val recorded = mutableListOf<FindUiState>()

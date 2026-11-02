@@ -1,141 +1,110 @@
 package com.orion.app
 
-import com.orion.core.enrollment.CheckEnrollmentUseCase
-import com.orion.core.enrollment.EnrollDeviceUseCase
-import com.orion.core.enrollment.EnrollmentCredential
-import com.orion.core.enrollment.EnrollmentResult
-import com.orion.core.enrollment.FakeDeviceIdProvider
-import com.orion.core.enrollment.FakeEnrollmentStore
-import com.orion.core.enrollment.FakeEnrollmentVerifier
-import com.orion.core.enrollment.UnenrollDeviceUseCase
+import androidx.lifecycle.ViewModelStore
+import com.orion.core.enrollment.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
+import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 
 private const val DEVICE_ID = "test-device-id"
-
-private val VALID_CREDENTIAL = EnrollmentCredential(
-    organizationId = "org-1",
-    siteId = "site-1",
-    deviceId = DEVICE_ID,
-    token = "opaque-token",
-    issuedAt = 0L,
-    expiresAt = null
-)
-
-private val EXPIRED_CREDENTIAL = VALID_CREDENTIAL.copy(expiresAt = 1L)
+private val VALID_CREDENTIAL = EnrollmentCredential("org-1", "site-1", DEVICE_ID, "opaque-token")
+private val WINDOW = ServerAuthorizationWindow(1_000L, 86_401_000L)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class EnrollmentViewModelTest {
-
-    @Before
-    fun setUp() {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
-    }
-
-    @After
-    fun tearDown() {
+    private val viewModels = mutableListOf<EnrollmentViewModel>()
+    @Before fun setUp() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
+    @After fun tearDown() {
+        viewModels.forEach { model -> ViewModelStore().apply { put("test", model); clear() } }
         Dispatchers.resetMain()
     }
 
     private fun newViewModel(
         store: FakeEnrollmentStore = FakeEnrollmentStore(),
-        verifierResult: EnrollmentResult = EnrollmentResult.Approved(VALID_CREDENTIAL)
-    ): Pair<EnrollmentViewModel, FakeEnrollmentStore> {
-        val checkEnrollment = CheckEnrollmentUseCase(store, now = { 100L })
-        val enrollDevice = EnrollDeviceUseCase(FakeEnrollmentVerifier(verifierResult), store)
-        val unenrollDevice = UnenrollDeviceUseCase(store)
-        val viewModel = EnrollmentViewModel(
-            checkEnrollment = checkEnrollment,
-            enrollDevice = enrollDevice,
-            unenrollDevice = unenrollDevice,
-            deviceIdProvider = FakeDeviceIdProvider(DEVICE_ID)
-        )
-        return viewModel to store
+        result: EnrollmentResult = EnrollmentResult.Approved(VALID_CREDENTIAL, WINDOW),
+        deviceId: String? = DEVICE_ID
+    ): EnrollmentViewModel = EnrollmentViewModel(
+        store = store,
+        verifier = FakeEnrollmentVerifier(onEnroll = { result }),
+        deviceIdProvider = FakeDeviceIdProvider(deviceId),
+        clock = MonotonicClock { 100L },
+        bootIdentity = BootIdentityProvider { 1 }
+    ).also { viewModels.add(it) }
+
+    @Test fun `nothing stored requires enrollment`() {
+        val model = newViewModel()
+        assertEquals(DeviceAuthorizationState.NotEnrolled, model.state.value)
+        assertEquals(DEVICE_ID, model.deviceId)
+        assertFalse(model.accessGate.isAccessGranted())
     }
 
-    @Test
-    fun `initial check with nothing stored yields NeedsEnrollment`() {
-        val (viewModel, _) = newViewModel(store = FakeEnrollmentStore(null))
-
-        val state = viewModel.state.value
-        assertTrue(state is EnrollmentUiState.NeedsEnrollment)
-        assertEquals(DEVICE_ID, (state as EnrollmentUiState.NeedsEnrollment).deviceId)
+    @Test fun `legacy credential requires verification rather than granting access`() {
+        val model = newViewModel(FakeEnrollmentStore(StoredEnrollment(VALID_CREDENTIAL, null, null)))
+        assertEquals(DeviceAuthorizationState.Checking, model.state.value)
+        assertFalse(model.accessGate.isAccessGranted())
     }
 
-    @Test
-    fun `initial check with a valid credential yields Enrolled`() {
-        val (viewModel, _) = newViewModel(store = FakeEnrollmentStore(VALID_CREDENTIAL))
-
-        assertTrue(viewModel.state.value is EnrollmentUiState.Enrolled)
+    @Test fun `valid same boot allowance grants offline access`() {
+        val allowance = OfflineAuthorization.anchor(WINDOW, 0L, 1)
+        val model = newViewModel(FakeEnrollmentStore(StoredEnrollment(VALID_CREDENTIAL, allowance, null)))
+        assertTrue(model.state.value is DeviceAuthorizationState.OfflineAuthorized)
+        assertTrue(model.accessGate.isAccessGranted())
     }
 
-    @Test
-    fun `initial check with an expired credential yields NeedsReEnrollment`() {
-        val (viewModel, _) = newViewModel(store = FakeEnrollmentStore(EXPIRED_CREDENTIAL))
-
-        val state = viewModel.state.value
-        assertTrue(state is EnrollmentUiState.NeedsReEnrollment)
-        assertEquals(DEVICE_ID, (state as EnrollmentUiState.NeedsReEnrollment).deviceId)
+    @Test fun `another boot cannot restore offline access`() {
+        val allowance = OfflineAuthorization.anchor(WINDOW, 0L, 2)
+        val model = newViewModel(FakeEnrollmentStore(StoredEnrollment(VALID_CREDENTIAL, allowance, null)))
+        assertEquals(DeviceAuthorizationState.Checking, model.state.value)
+        assertFalse(model.accessGate.isAccessGranted())
     }
 
-    @Test
-    fun `enroll with an approving verifier drives Enrolling then Enrolled`() {
-        val (viewModel, store) = newViewModel(
-            store = FakeEnrollmentStore(null),
-            verifierResult = EnrollmentResult.Approved(VALID_CREDENTIAL)
-        )
-
-        viewModel.enroll("ORG", "SITE")
-
-        assertTrue(viewModel.state.value is EnrollmentUiState.Enrolled)
-        assertEquals(VALID_CREDENTIAL, store.saved)
+    @Test fun `approved enrollment saves credential and allowance and grants access`() {
+        val store = FakeEnrollmentStore()
+        val model = newViewModel(store)
+        model.enroll("ORG", "SITE", "one-time-authorization")
+        assertTrue(model.state.value is DeviceAuthorizationState.Authorized)
+        assertEquals(VALID_CREDENTIAL, store.saved?.credential)
+        assertNotNull(store.saved?.offlineAuthorization)
+        assertTrue(model.accessGate.isAccessGranted())
     }
 
-    @Test
-    fun `enroll with a rejecting verifier yields EnrollmentRejected`() {
-        val (viewModel, store) = newViewModel(
-            store = FakeEnrollmentStore(null),
-            verifierResult = EnrollmentResult.Rejected("unknown organization")
-        )
-
-        viewModel.enroll("BAD", "SITE")
-
-        val state = viewModel.state.value
-        assertTrue(state is EnrollmentUiState.EnrollmentRejected)
-        assertEquals("unknown organization", (state as EnrollmentUiState.EnrollmentRejected).reason)
-        assertEquals(null, store.saved)
+    @Test fun `rejected enrollment does not save or grant access`() {
+        val store = FakeEnrollmentStore()
+        val model = newViewModel(store, EnrollmentResult.Rejected("unknown organization"))
+        model.enroll("BAD", "SITE", "one-time-authorization")
+        assertEquals(DeviceAuthorizationState.EnrollmentRejected("unknown organization"), model.state.value)
+        assertNull(store.saved)
+        assertFalse(model.accessGate.isAccessGranted())
     }
 
-    @Test
-    fun `enroll with a failing verifier yields EnrollmentFailed`() {
-        val (viewModel, _) = newViewModel(
-            store = FakeEnrollmentStore(null),
-            verifierResult = EnrollmentResult.Failure("not configured")
-        )
-
-        viewModel.enroll("ORG", "SITE")
-
-        val state = viewModel.state.value
-        assertTrue(state is EnrollmentUiState.EnrollmentFailed)
-        assertEquals("not configured", (state as EnrollmentUiState.EnrollmentFailed).reason)
+    @Test fun `failed enrollment remains blocked`() {
+        val model = newViewModel(result = EnrollmentResult.Failure("not configured"))
+        model.enroll("ORG", "SITE", "one-time-authorization")
+        assertEquals(DeviceAuthorizationState.EnrollmentFailed("not configured"), model.state.value)
+        assertFalse(model.accessGate.isAccessGranted())
     }
 
-    @Test
-    fun `unenroll returns to NeedsEnrollment`() {
-        val (viewModel, store) = newViewModel(store = FakeEnrollmentStore(VALID_CREDENTIAL))
-        assertTrue(viewModel.state.value is EnrollmentUiState.Enrolled)
+    @Test fun `persisted revocation overrides a valid allowance`() {
+        val allowance = OfflineAuthorization.anchor(WINDOW, 0L, 1)
+        val model = newViewModel(FakeEnrollmentStore(StoredEnrollment(VALID_CREDENTIAL, allowance, DenialReason.REVOKED)))
+        assertEquals(DeviceAuthorizationState.Revoked, model.state.value)
+        assertFalse(model.accessGate.isAccessGranted())
+    }
 
-        viewModel.unenroll()
-
-        assertTrue(viewModel.state.value is EnrollmentUiState.NeedsEnrollment)
-        assertEquals(null, store.saved)
+    @Test fun `missing and blank device ids block enrollment`() {
+        listOf(null, "", "   ").forEach { id ->
+            val store = FakeEnrollmentStore()
+            val model = newViewModel(store = store, deviceId = id)
+            model.enroll("ORG", "SITE", "one-time-authorization")
+            assertEquals(DeviceAuthorizationState.DeviceIdUnavailable, model.state.value)
+            assertNull(store.saved)
+            assertFalse(model.accessGate.isAccessGranted())
+        }
     }
 }

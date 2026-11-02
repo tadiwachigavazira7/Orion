@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Auto Backup rules for Android 6-11 (android:fullBackupContent).
+
+  The enrollment record is encrypted with a Tink keyset that is itself wrapped by an
+  Android Keystore master key. Keystore keys are never backed up or transferred, so a
+  restored copy of the record or keyset can never be decrypted on the new install.
+  Restoring them would leave the app with permanently unreadable enrollment data, and
+  a device credential belongs to one physical device in any case. Both are therefore
+  excluded; everything else keeps the platform default.
+-->
+<full-backup-content>
+    <exclude domain="file" path="datastore/" />
+    <exclude domain="sharedpref" path="orion_enrollment_keyset_prefs.xml" />
+</full-backup-content>

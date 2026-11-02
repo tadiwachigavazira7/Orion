@@ -24,8 +24,13 @@ import com.google.crypto.tink.RegistryConfiguration
 import com.google.crypto.tink.aead.AeadConfig
 import com.google.crypto.tink.aead.PredefinedAeadParameters
 import com.google.crypto.tink.integration.android.AndroidKeysetManager
+import com.orion.core.enrollment.DenialReason
+import com.orion.core.enrollment.EnrollmentDataUnreadableException
 import com.orion.core.enrollment.EnrollmentCredential
 import com.orion.core.enrollment.EnrollmentStore
+import com.orion.core.enrollment.OfflineAuthorization
+import com.orion.core.enrollment.SecureStorageUnavailableException
+import com.orion.core.enrollment.StoredEnrollment
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -37,88 +42,197 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.security.GeneralSecurityException
+import java.security.ProviderException
 
+// The keyset prefs file and the datastore/ directory are excluded from backup and device
+// transfer (res/xml/backup_rules.xml, res/xml/data_extraction_rules.xml): they are bound
+// to this device's Keystore key. Keep those rules in sync if these names change.
 private const val KEYSET_NAME = "orion_enrollment_keyset"
 private const val KEYSET_PREF_FILE_NAME = "orion_enrollment_keyset_prefs"
 private const val MASTER_KEY_URI = "android-keystore://orion_enrollment_master_key"
 private const val DATASTORE_FILE_NAME = "orion_enrollment_secure.pb"
 
+/** Legacy (pre-v2) first byte: DataOutputStream.writeBoolean(false) -- nothing stored. */
+private const val LEGACY_NO_CREDENTIAL: Int = 0
+/** Legacy (pre-v2) first byte: DataOutputStream.writeBoolean(true) -- legacy credential layout follows. */
+private const val LEGACY_HAS_CREDENTIAL: Int = 1
+/** Current format marker. Distinct from the legacy boolean bytes (0/1) so both can be told apart. */
+internal const val FORMAT_VERSION_2: Int = 2
+
+private const val RECORD_EMPTY: Int = 0
+private const val RECORD_PRESENT: Int = 1
+private const val RECORD_UNREADABLE: Int = 2
+
+private const val DENIAL_NONE: Int = 0
+private const val DENIAL_REVOKED: Int = 1
+private const val DENIAL_INVALID_CREDENTIAL: Int = 2
+private const val DENIAL_UNKNOWN_DEVICE: Int = 3
+
 /**
- * Serializes [EnrollmentCredential] (or `null`, meaning "not enrolled" -- this
- * IS the [defaultValue]) to/from a plain byte stream.
- *
- * No JSON/protobuf dependency exists in this project, so the 6 fields are
- * encoded manually. `organizationId`/`siteId`/`deviceId`/`token` use a
- * length-prefixed UTF-8 encoding (4-byte length + raw UTF-8 bytes) rather than
- * `DataOutputStream.writeUTF`/`readUTF`, which caps encoded length at 65535
- * bytes -- `token` is documented on [EnrollmentCredential] as opaque,
- * backend-issued, with no assumed format or length.
- *
- * `internal` (not `private`) so this file's byte encode/decode round-trip can
- * be covered by a plain JVM unit test in this module's test source set --
- * this is the one piece of the store that's meaningfully unit-testable
- * without Android/DataStore/Tink dependencies.
+ * What is persisted in the encrypted file. [Unreadable] is written by the corruption
+ * handler in place of a record that could not be read, so "broken" stays
+ * distinguishable from "never enrolled" across restarts (CLAUDE.md §22) until a new
+ * enrollment is saved over it.
  */
-internal object EnrollmentCredentialSerializer : Serializer<EnrollmentCredential?> {
+internal sealed interface PersistedEnrollment {
+    data object Empty : PersistedEnrollment
+    data class Present(val record: StoredEnrollment) : PersistedEnrollment
+    data object Unreadable : PersistedEnrollment
+}
 
-    override val defaultValue: EnrollmentCredential? = null
+/**
+ * Serializes [PersistedEnrollment] ([PersistedEnrollment.Empty] -- "not enrolled" --
+ * is the [defaultValue]) to/from a plain byte stream. No JSON/protobuf dependency exists
+ * in this project, so fields are encoded manually.
+ *
+ * Format v2 (always written):
+ * ```
+ * u8  version = 2
+ * u8  record (0 empty, 1 present, 2 unreadable marker)
+ * -- if present:
+ * str organizationCode, str siteCode, str deviceId, str token
+ * u8  hasOfflineAuthorization (0/1)
+ *   i64 serverTimeEpochMs, i64 offlineValidUntilEpochMs, i64 receivedAtElapsedRealtimeMs
+ *   u8  hasBootCount (0/1) [i32 bootCount]
+ * u8  denial (0 none, 1 revoked, 2 invalid credential, 3 unknown device)
+ * ```
+ * `str` = 4-byte length + UTF-8 bytes (not writeUTF, which caps at 65535 bytes;
+ * the token is opaque with no assumed length).
+ *
+ * Legacy format (read-only migration): first byte is a boolean 0/1, then
+ * org/site/device/token strings, `issuedAt` i64, and an optional `expiresAt`.
+ * A legacy credential migrates to a v2 record WITHOUT an offline authorization
+ * (and its local `expiresAt` is discarded), so online verification is required
+ * before access. The next write stores v2.
+ *
+ * `internal` so the byte round-trip / migration can be covered by a plain JVM test.
+ */
+internal object EnrollmentRecordSerializer : Serializer<PersistedEnrollment> {
 
-    override suspend fun readFrom(input: InputStream): EnrollmentCredential? {
+    override val defaultValue: PersistedEnrollment = PersistedEnrollment.Empty
+
+    override suspend fun readFrom(input: InputStream): PersistedEnrollment {
         try {
             val dataIn = DataInputStream(input)
-            val hasCredential = dataIn.readBoolean()
-            if (!hasCredential) return null
-
-            val organizationId = readLengthPrefixedString(dataIn)
-            val siteId = readLengthPrefixedString(dataIn)
-            val deviceId = readLengthPrefixedString(dataIn)
-            val token = readLengthPrefixedString(dataIn)
-            val issuedAt = dataIn.readLong()
-            val hasExpiresAt = dataIn.readBoolean()
-            val expiresAt = if (hasExpiresAt) dataIn.readLong() else null
-
-            return EnrollmentCredential(
-                organizationId = organizationId,
-                siteId = siteId,
-                deviceId = deviceId,
-                token = token,
-                issuedAt = issuedAt,
-                expiresAt = expiresAt
-            )
+            return when (val first = dataIn.readUnsignedByte()) {
+                LEGACY_NO_CREDENTIAL -> PersistedEnrollment.Empty
+                LEGACY_HAS_CREDENTIAL -> PersistedEnrollment.Present(readLegacyCredential(dataIn))
+                FORMAT_VERSION_2 -> readV2(dataIn)
+                else -> throw IOException("Unknown enrollment store format byte: $first")
+            }
         } catch (e: EOFException) {
-            // Malformed/truncated bytes. Surfaced as CorruptionException (which
-            // extends IOException) so the ReplaceFileCorruptionHandler wired up
-            // in DataStoreEnrollmentStore.buildDataStore() can transparently
-            // reset this back to defaultValue (null) instead of crashing every
-            // read.
-            throw CorruptionException("Malformed EnrollmentCredential bytes", e)
+            // Malformed/truncated bytes. Surfaced as CorruptionException (which extends
+            // IOException) so the ReplaceFileCorruptionHandler wired up in
+            // DataStoreEnrollmentStore.buildDataStore() replaces the file with the
+            // explicit Unreadable marker (never with "not enrolled").
+            throw CorruptionException("Malformed enrollment store bytes", e)
         } catch (e: IOException) {
-            throw CorruptionException("Malformed EnrollmentCredential bytes", e)
+            throw CorruptionException("Malformed enrollment store bytes", e)
         }
     }
 
-    override suspend fun writeTo(t: EnrollmentCredential?, output: OutputStream) {
-        val dataOut = DataOutputStream(output)
-        if (t == null) {
-            dataOut.writeBoolean(false)
-            dataOut.flush()
-            return
-        }
+    private fun readLegacyCredential(dataIn: DataInputStream): StoredEnrollment {
+        val credential = EnrollmentCredential(
+            organizationCode = readLengthPrefixedString(dataIn),
+            siteCode = readLengthPrefixedString(dataIn),
+            deviceId = readLengthPrefixedString(dataIn),
+            token = readLengthPrefixedString(dataIn)
+        )
+        dataIn.readLong() // legacy issuedAt: local bookkeeping only, discarded
+        if (dataIn.readBoolean()) dataIn.readLong() // legacy expiresAt: superseded by server-issued offline window
+        return StoredEnrollment(credential, offlineAuthorization = null, denial = null)
+    }
 
-        dataOut.writeBoolean(true)
-        writeLengthPrefixedString(dataOut, t.organizationId)
-        writeLengthPrefixedString(dataOut, t.siteId)
-        writeLengthPrefixedString(dataOut, t.deviceId)
-        writeLengthPrefixedString(dataOut, t.token)
-        dataOut.writeLong(t.issuedAt)
-        val expiresAt = t.expiresAt
-        if (expiresAt != null) {
-            dataOut.writeBoolean(true)
-            dataOut.writeLong(expiresAt)
+    private fun readV2(dataIn: DataInputStream): PersistedEnrollment {
+        when (val marker = dataIn.readUnsignedByte()) {
+            RECORD_EMPTY -> return PersistedEnrollment.Empty
+            RECORD_UNREADABLE -> return PersistedEnrollment.Unreadable
+            RECORD_PRESENT -> Unit
+            else -> throw IOException("Invalid record marker: $marker")
+        }
+        val credential = EnrollmentCredential(
+            organizationCode = readLengthPrefixedString(dataIn),
+            siteCode = readLengthPrefixedString(dataIn),
+            deviceId = readLengthPrefixedString(dataIn),
+            token = readLengthPrefixedString(dataIn)
+        )
+        val authorization = if (readFlag(dataIn)) {
+            val serverTime = dataIn.readLong()
+            val validUntil = dataIn.readLong()
+            val receivedAt = dataIn.readLong()
+            val bootCount = if (readFlag(dataIn)) dataIn.readInt() else null
+            OfflineAuthorization(
+                serverTimeEpochMs = serverTime,
+                offlineValidUntilEpochMs = validUntil,
+                receivedAtElapsedRealtimeMs = receivedAt,
+                bootCount = bootCount
+            )
         } else {
-            dataOut.writeBoolean(false)
+            null
+        }
+        val denial = when (val code = dataIn.readUnsignedByte()) {
+            DENIAL_NONE -> null
+            DENIAL_REVOKED -> DenialReason.REVOKED
+            DENIAL_INVALID_CREDENTIAL -> DenialReason.INVALID_CREDENTIAL
+            DENIAL_UNKNOWN_DEVICE -> DenialReason.UNKNOWN_DEVICE
+            else -> throw IOException("Unknown denial code: $code")
+        }
+        // A denial always clears the allowance; never let a stored allowance outlive a denial.
+        return PersistedEnrollment.Present(
+            StoredEnrollment(credential, if (denial != null) null else authorization, denial)
+        )
+    }
+
+    override suspend fun writeTo(t: PersistedEnrollment, output: OutputStream) {
+        val dataOut = DataOutputStream(output)
+        dataOut.writeByte(FORMAT_VERSION_2)
+        when (t) {
+            PersistedEnrollment.Empty -> dataOut.writeByte(RECORD_EMPTY)
+            PersistedEnrollment.Unreadable -> dataOut.writeByte(RECORD_UNREADABLE)
+            is PersistedEnrollment.Present -> {
+                dataOut.writeByte(RECORD_PRESENT)
+                writeRecord(dataOut, t.record)
+            }
         }
         dataOut.flush()
+    }
+
+    private fun writeRecord(dataOut: DataOutputStream, t: StoredEnrollment) {
+        writeLengthPrefixedString(dataOut, t.credential.organizationCode)
+        writeLengthPrefixedString(dataOut, t.credential.siteCode)
+        writeLengthPrefixedString(dataOut, t.credential.deviceId)
+        writeLengthPrefixedString(dataOut, t.credential.token)
+
+        val authorization = t.offlineAuthorization.takeIf { t.denial == null }
+        if (authorization == null) {
+            dataOut.writeByte(0)
+        } else {
+            dataOut.writeByte(1)
+            dataOut.writeLong(authorization.serverTimeEpochMs)
+            dataOut.writeLong(authorization.offlineValidUntilEpochMs)
+            dataOut.writeLong(authorization.receivedAtElapsedRealtimeMs)
+            val bootCount = authorization.bootCount
+            if (bootCount == null) {
+                dataOut.writeByte(0)
+            } else {
+                dataOut.writeByte(1)
+                dataOut.writeInt(bootCount)
+            }
+        }
+        dataOut.writeByte(
+            when (t.denial) {
+                null -> DENIAL_NONE
+                DenialReason.REVOKED -> DENIAL_REVOKED
+                DenialReason.INVALID_CREDENTIAL -> DENIAL_INVALID_CREDENTIAL
+                DenialReason.UNKNOWN_DEVICE -> DENIAL_UNKNOWN_DEVICE
+            }
+        )
+    }
+
+    private fun readFlag(input: DataInputStream): Boolean = when (val b = input.readUnsignedByte()) {
+        0 -> false
+        1 -> true
+        else -> throw IOException("Invalid flag byte: $b")
     }
 
     private fun writeLengthPrefixedString(out: DataOutputStream, value: String) {
@@ -130,16 +244,10 @@ internal object EnrollmentCredentialSerializer : Serializer<EnrollmentCredential
     private fun readLengthPrefixedString(input: DataInputStream): String {
         val length = input.readInt()
         if (length < 0) throw IOException("Negative length-prefixed string length: $length")
-        // A torn/partially-written file (e.g. process killed mid-write) can produce a
-        // large positive length up to Int.MAX_VALUE. Without this cap, `ByteArray(length)`
-        // can throw OutOfMemoryError -- an Error, not an Exception -- before readFully()
-        // ever gets a chance to throw the EOFException/IOException that the caller above
-        // already converts to CorruptionException (letting ReplaceFileCorruptionHandler
-        // degrade gracefully to "not enrolled" instead of crashing). The cap is set well
-        // above any realistic field value -- organizationId/siteId/deviceId are short
-        // identifiers, and the existing "token longer than 65535 bytes" test round-trips a
-        // 100,000-byte token -- while still ruling out multi-hundred-MB/GB allocations from
-        // a corrupted length prefix.
+        // A torn/partially-written file can produce a large positive length up to
+        // Int.MAX_VALUE. Without this cap, `ByteArray(length)` can throw OutOfMemoryError
+        // (an Error, not an Exception) before readFully() gets a chance to throw the
+        // EOFException that readFrom() converts to CorruptionException.
         if (length > MAX_LENGTH_PREFIXED_STRING_BYTES) {
             throw IOException(
                 "Length-prefixed string length $length exceeds max allowed " +
@@ -181,14 +289,14 @@ class DataStoreEnrollmentStore(private val context: Context) : EnrollmentStore {
     // the companion object, keyed process-wide rather than per-instance, built at most once.
     // Double-checked locking (@Volatile + synchronized) avoids a race if two
     // DataStoreEnrollmentStore instances are constructed concurrently early in app startup.
-    private val dataStore: DataStore<EnrollmentCredential?>
+    private val dataStore: DataStore<PersistedEnrollment>
         get() = getOrCreateDataStore(context.applicationContext)
 
     companion object {
         @Volatile
-        private var instance: DataStore<EnrollmentCredential?>? = null
+        private var instance: DataStore<PersistedEnrollment>? = null
 
-        private fun getOrCreateDataStore(appContext: Context): DataStore<EnrollmentCredential?> {
+        private fun getOrCreateDataStore(appContext: Context): DataStore<PersistedEnrollment> {
             instance?.let { return it }
             synchronized(this) {
                 instance?.let { return it }
@@ -198,7 +306,7 @@ class DataStoreEnrollmentStore(private val context: Context) : EnrollmentStore {
             }
         }
 
-        private fun buildDataStore(appContext: Context): DataStore<EnrollmentCredential?> {
+        private fun buildDataStore(appContext: Context): DataStore<PersistedEnrollment> {
             // Registers the AES-GCM key manager Tink needs; must happen before building or
             // using the Aead primitive below.
             AeadConfig.register()
@@ -214,7 +322,7 @@ class DataStoreEnrollmentStore(private val context: Context) : EnrollmentStore {
 
             val aeadSerializer = AeadSerializer(
                 aead = aead,
-                wrappedSerializer = EnrollmentCredentialSerializer,
+                wrappedSerializer = EnrollmentRecordSerializer,
                 // Unique name for this DataStore file -- prevents ciphertext from this file
                 // being swapped into a different encrypted DataStore undetected.
                 associatedData = DATASTORE_FILE_NAME.encodeToByteArray()
@@ -222,54 +330,51 @@ class DataStoreEnrollmentStore(private val context: Context) : EnrollmentStore {
 
             return DataStoreFactory.create(
                 serializer = aeadSerializer,
-                corruptionHandler = ReplaceFileCorruptionHandler { null },
+                // Replace an unreadable file with an explicit marker, so the next launch still
+                // reports "enrollment data could not be read" instead of "not enrolled" (a
+                // persisted denial must never silently turn into an empty state).
+                corruptionHandler = ReplaceFileCorruptionHandler { PersistedEnrollment.Unreadable },
                 produceFile = { File(appContext.filesDir, "datastore/$DATASTORE_FILE_NAME") }
             )
         }
     }
 
-    override suspend fun save(credential: EnrollmentCredential) = withContext(Dispatchers.IO) {
-        // Deliberate: a Keystore/Tink failure here (e.g. corrupted keystore) is allowed
-        // to propagate as an uncaught exception on save, since EnrollDeviceUseCase
-        // already wraps it into an explicit EnrollmentResult.Failure rather than
-        // silently losing the just-approved enrollment. Matches the prior
-        // EncryptedPrefsEnrollmentStore's documented decision. AeadSerializer.writeTo
-        // similarly does not catch GeneralSecurityException from aead.encrypt() --
-        // it propagates raw, consistent with this.
-        dataStore.updateData { credential }
+    override suspend fun save(record: StoredEnrollment) = withContext(Dispatchers.IO) {
+        // Deliberate: a Keystore/Tink/I/O failure here propagates to the caller.
+        // DeviceAuthorizationManager turns a failed save after an enrollment approval
+        // into an explicit RecoveryRequired state rather than silently losing it.
+        // Overwrites an Unreadable marker, which is how a device recovers (re-enrollment).
+        try {
+            dataStore.updateData { PersistedEnrollment.Present(record) }
+        } catch (e: GeneralSecurityException) {
+            // Keyset/Keystore could not be opened, or encryption failed.
+            throw SecureStorageUnavailableException("Secure storage could not be used to save enrollment data.", e)
+        } catch (e: ProviderException) {
+            // Android Keystore failures can also surface as this RuntimeException.
+            throw SecureStorageUnavailableException("Secure storage could not be used to save enrollment data.", e)
+        }
         Unit
     }
 
-    override suspend fun load(): EnrollmentCredential? = withContext(Dispatchers.IO) {
-        try {
+    override suspend fun load(): StoredEnrollment? = withContext(Dispatchers.IO) {
+        val persisted = try {
             dataStore.data.first()
         } catch (e: IOException) {
-            // Safety net for DataStore file I/O failures. Most corruption cases never
-            // reach this catch because AeadSerializer.readFrom's CorruptionException is
-            // already handled transparently by the ReplaceFileCorruptionHandler wired
-            // up in buildDataStore(), which resets the file back to defaultValue (null).
-            null
+            // DataStore file I/O failure (corruption is normally converted to the Unreadable
+            // marker by the corruption handler before reaching here).
+            throw EnrollmentDataUnreadableException("Enrollment data could not be read from storage.", e)
         } catch (e: GeneralSecurityException) {
-            // Covers the lazy Tink/Keystore-open step (buildDataStore(), accessed via
-            // the `dataStore` property above) failing -- e.g. keystore corruption/reset
-            // -- before any DataStore file I/O happens. Treat this installation as "not
-            // enrolled" rather than crashing the app on every launch. Narrowly scoped to
-            // this open/read path, not a blanket catch-all, so it cannot mask unrelated
-            // bugs in save()/clear(). Same rationale as the prior
-            // EncryptedPrefsEnrollmentStore's openPrefs() catch.
-            null
+            // The lazy Tink/Keystore-open step (buildDataStore()) failed, e.g. keystore
+            // corruption/reset: the secure storage itself is unusable, not just this file.
+            throw SecureStorageUnavailableException("Secure storage could not be opened.", e)
+        } catch (e: ProviderException) {
+            throw SecureStorageUnavailableException("Secure storage could not be opened.", e)
         }
-    }
-
-    override suspend fun clear() = withContext(Dispatchers.IO) {
-        try {
-            dataStore.updateData { null }
-        } catch (e: IOException) {
-            // Nothing usable to clear if the store can't even be opened/read; see
-            // load()'s comment above for why this narrow catch is intentional.
-        } catch (e: GeneralSecurityException) {
-            // See load()'s comment above.
+        when (persisted) {
+            PersistedEnrollment.Empty -> null
+            is PersistedEnrollment.Present -> persisted.record
+            PersistedEnrollment.Unreadable ->
+                throw EnrollmentDataUnreadableException("Stored enrollment data was corrupted.")
         }
-        Unit
     }
 }

@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from orion_backend.config import Settings
 from orion_backend.services.credential_hasher import Argon2CredentialHasher, CredentialHasher
 
 # One hasher instance is enough: PasswordHasher itself holds no mutable
@@ -19,3 +20,7 @@ async def get_db(request: Request) -> AsyncIterator[AsyncSession]:
 
 def get_credential_hasher() -> CredentialHasher:
     return _hasher
+
+
+def get_app_settings(request: Request) -> Settings:
+    return request.app.state.settings

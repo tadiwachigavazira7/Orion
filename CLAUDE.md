@@ -427,17 +427,26 @@ Reads from the hardware *may* start earlier as an optional latency optimization 
 
 # 16. Backend
 
-Orion has **one** backend service, `orion_fastAPI/`, and it has a single, concrete job: **PDT device enrollment, verification, and revocation.** It answers "is this scanner trusted to run Orion, and for which retailer site?"
+Orion has **one** backend service, `orion_fastAPI/`, and it has a single, concrete job: **PDT device enrollment, verification, revocation, and reset.** It answers "is this scanner trusted to run Orion, and for which retailer site?"
 
 ## What it owns
 
 ```text
 organizations     → retailer tenant, identified by a unique organization_code
 sites             → store/warehouse within an organization (site_code unique per org)
-enrolled_devices  → a PDT trusted to run Orion, bound to a site; ACTIVE or REVOKED
+enrolled_devices          → a PDT bound to a site; ACTIVE, REVOKED, or PENDING_ENROLLMENT
+                            (credential_hash is NULL only when PENDING_ENROLLMENT)
+enrollment_authorizations → operator-issued, short-lived, single-use permission for one
+                            device_id at one org/site (SHA-256 digest of the secret only)
 ```
 
 Endpoints live in `orion_backend/api/` (`enrollment.py`, `devices.py`); business logic lives in `orion_backend/services/`; routes stay thin.
+
+**Public HTTP surface:** `POST /enrollment` (requires `enrollment_authorization`) and `POST /enrolled_devices/{device_id}/verify`. Both return `server_time` and `offline_valid_until`, which the server decides (`OFFLINE_AUTHORIZATION_HOURS`, default 24). There is **no admin HTTP API**. Organizations, sites, authorizations, inspect, revoke and reset go only through the trusted operator CLI, `python -m orion_backend.cli` (`orion_backend/cli.py`, a thin layer over `services/admin_service.py` and `services/enrollment_authorization_service.py`). See `orion_fastAPI/OPERATIONS.md`.
+
+**Lifecycle:** no record or PENDING_ENROLLMENT + a valid authorization → ACTIVE. ACTIVE → REVOKED (revoke). ACTIVE or REVOKED → PENDING_ENROLLMENT (reset clears the credential, voids outstanding authorizations, and issues nothing). `POST /enrollment` never reactivates or overwrites an ACTIVE or REVOKED device (409). Devices are never moved between sites or organizations. Recovery from a lost credential, a lost response, or a local-save failure is always: reset → new authorization → re-enroll.
+
+**Concurrency:** authorizations are consumed atomically in the same transaction that activates the device, and any failure rolls back. Issuance and enrollment are serialized per `device_id` by a Postgres advisory lock. Verify holds no lock while hashing and checks the credential before revealing status. CORS allows POST only, with explicit `CORS_ORIGINS`. CORS is not authentication.
 
 ## What it must NOT own
 
@@ -449,20 +458,28 @@ Expanding the backend beyond enrollment (configuration, analytics, telemetry, re
 
 ## Backend rules
 
-* **Credentials:** never store a plaintext enrollment credential — only an Argon2id hash (`services/credential_hasher.py`). Never log credentials.
+* **Credentials:** never store a plaintext enrollment credential — only an Argon2id hash (`services/credential_hasher.py`). Never log credentials. Enrollment authorizations are 256-bit random secrets stored only as SHA-256 digests (an indexed lookup is needed for atomic consumption); never log or store them in plaintext.
 * **Config:** all settings come from environment / `.env` via `config.py`; see `.env.example`. Never hardcode connection strings or secrets.
 * **Schema changes:** every model change ships with an Alembic migration in `alembic/versions/`. Never edit an already-applied migration.
 * **Errors:** use the explicit error types in `errors.py`; do not return bare `None`/empty bodies to signal failure (§22 applies here too).
 * **Tests:** non-trivial endpoint/service changes need tests in `orion_fastAPI/tests/`.
-* **Dev data:** `scripts/seed_dev_data.py` seeds local data; it must never run against production.
+* **Dev data:** `scripts/seed_dev_data.py` seeds local data; it must never run against production. It refuses to run unless `ORION_ENVIRONMENT=development` is set explicitly.
 
 ## Android ↔ backend seam
 
 The Android app talks to the backend only through the enrollment seam in `com.orion.core.enrollment` (domain) and `com.orion.data.enrollment` (implementations):
 
-* `HttpEnrollmentVerifier` calls the `/enrollment` endpoint at `BuildConfig.ENROLLMENT_BASE_URL`.
-* Debug builds default to the emulator host alias `10.0.2.2`, with cleartext allowed **only** for that host via the debug network security config.
-* Release builds have an empty base URL, so `UnconfiguredEnrollmentVerifier` is the honest fallback — an explicit "not configured" state, never a fake success.
+* `EnrollmentVerifier` has two calls: `enroll(...)` → `POST /enrollment` (organization code, site code, device ID, one-time **enrollment authorization** issued by an operator) and `verify(credential)` → `POST /enrolled_devices/{device_id}/verify`. `HttpEnrollmentVerifier` implements the shared contract's response mapping exactly; denials require both the status and the documented `error_code`, otherwise the result is "verification unavailable".
+* `DeviceAuthorizationManager` (pure Kotlin, in core) is the single source of truth for whether find/navigation may run. Its states are an exhaustive sealed `DeviceAuthorizationState`; only `Authorized` and `OfflineAuthorized` grant access. `FindFlowViewModel` depends on the read-only `DeviceAccessGate`: it refuses to start lookups/navigation when blocked and cancels the active RFID session (FindTagUseCase teardown) as soon as access is lost.
+* **Verification triggers:** app launch, return to foreground, every 15 minutes while in the foreground, and when connectivity returns (bounded backoff). Single-flight; results from before a newer denial / credential change are discarded. First enrollment requires connectivity.
+* **Offline allowance:** the server sets it (`offline_valid_until - server_time`, 24 h by default) on enroll 201 / verify 200. Android anchors it to `SystemClock.elapsedRealtime()` and tags it with `Settings.Global.BOOT_COUNT`; a different/unreadable boot or a clock behind the anchor voids it. Android never extends it after failed checks, and blocks exactly at the deadline with "Connect to verify this device." (credential kept; a successful verify restores access).
+* **Explicit denials** (revoked / invalid credential / unknown device) block immediately, override any remaining allowance, and are persisted (allowance cleared) so a restart cannot restore access. If that write fails, the in-memory denial still blocks and the write is retried on every later verification trigger, foreground start, and allowance expiry. **Remaining gap:** if the process dies before any retry succeeds, a restart in the same boot could restore the previously stored allowance until its own deadline or the next successful check. Revocation takes effect at the device's **next successful check** — do not describe it as immediate.
+* **Losing access cancels RFID work:** `FindFlowViewModel` cancels lookups, navigation, and warm-up, then releases the reader; `FindTagUseCase` teardown (`stopInventory` + `disconnect`) runs under `NonCancellable` so adapters whose teardown suspends still complete it.
+* **Deadline precision:** the expiry transition is scheduled on the monotonic clock in ≤ 60 s chunks; `isAccessGranted()` (checked before every lookup/navigation start) and every foreground start re-check the deadline directly, so a timer delayed by deep sleep can never let new find/navigation work start past the deadline.
+* **Storage:** the durable `EnrollmentCredential` (no expiry) and the time-limited `OfflineAuthorization` are stored separately in one encrypted DataStore + Tink record (versioned format; legacy records migrate as credential-without-authorization and require online verification). Unreadable data (corruption, Keystore loss, I/O) is reported as `EnrollmentDataUnreadableException` → `RecoveryRequired`, never as "not enrolled"; a corrupt file is replaced by an explicit "unreadable" marker until a new enrollment is saved. The enrollment DataStore and its Keystore-wrapped keyset prefs are excluded from Auto Backup and device transfer (`res/xml/backup_rules.xml`, `res/xml/data_extraction_rules.xml`), because a restored copy could never be decrypted.
+* **Recovery:** there is no employee-facing unenroll. `409 device_already_enrolled`, a lost enrollment response, or an approval that cannot be saved locally → `RecoveryRequired` ("ask an administrator to reset this device"); never retried automatically. After an administrator reset the employee re-enrolls from the enrollment screen with a new authorization; only an approved result replaces the stored credential. If the device's **secure storage itself** cannot be opened (Keystore/Tink keyset unusable — `SecureStorageUnavailableException`, distinct from corrupt data), an admin reset alone cannot help, so `RecoveryRequired` says: "Secure storage on this device is unavailable. Clear Orion's app data or reinstall, then ask an administrator to reset this device." Orion never deletes keysets or data automatically.
+* **Device ID:** `ANDROID_ID` is an identifier, not authentication. Null/blank → `DeviceIdUnavailable`; there is no shared fallback ID.
+* **Base URL:** debug builds default to the emulator host alias `http://10.0.2.2:8000` (override with `-PORION_ENROLLMENT_BASE_URL=...`), with cleartext allowed **only** for `10.0.2.2` via the debug network security config. Release builds take `-PORION_RELEASE_ENROLLMENT_BASE_URL=https://...` (or the env var of the same name) and **fail to build** unless it is a valid `https` URL (`validateReleaseEnrollmentBaseUrl`, hooked into `preReleaseBuild`); there is no fallback to the dev URL. `UnconfiguredEnrollmentVerifier` remains only as a defensive runtime fallback that never reports success.
 
 Core and domain code depend on the enrollment interfaces, never on HTTP details.
 
@@ -531,10 +548,12 @@ orion_fastAPI/
 │   ├── db/           # SQLAlchemy models and session
 │   ├── schemas.py    # Pydantic request/response models
 │   ├── errors.py     # explicit error types
-│   └── config.py     # env-driven settings
+│   ├── config.py     # env-driven settings
+│   └── cli.py        # trusted operator CLI (orgs, sites, authorizations, revoke, reset)
 ├── alembic/          # migrations
 ├── scripts/          # dev tooling (e.g. seed_dev_data.py)
-└── tests/
+├── tests/
+└── OPERATIONS.md     # operator CLI reference and recovery procedures
 ```
 
 The exact structure may evolve. Do not create folders just to satisfy a theoretical architecture.

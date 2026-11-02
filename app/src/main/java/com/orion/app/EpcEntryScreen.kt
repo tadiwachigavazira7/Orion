@@ -137,6 +137,14 @@ fun EpcEntryScreen(
                         modifier = Modifier.padding(top = 16.dp)
                     )
 
+                    // Normally unreachable on screen (MainActivity shows the device-authorization
+                    // screen instead), but rendered honestly if it ever is.
+                    is FindUiState.AccessBlocked -> Text(
+                        "This device is not currently authorized to run Orion.",
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 16.dp)
+                    )
+
                     // Idle: nothing extra to show below the form.
                     // Navigating: not rendered here — MainActivity routes to CompassScreen instead.
                     is FindUiState.Idle, is FindUiState.Navigating -> Unit

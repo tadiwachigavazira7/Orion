@@ -9,6 +9,8 @@ class EnrollmentRequest(BaseModel):
     organization_code: str = Field(min_length=1, max_length=128)
     site_code: str = Field(min_length=1, max_length=128)
     device_id: str = Field(min_length=1, max_length=128)
+    # Operator-issued, short-lived, single-use secret (see OPERATIONS.md).
+    enrollment_authorization: str = Field(min_length=1, max_length=256)
 
 
 class EnrollmentResponse(BaseModel):
@@ -17,6 +19,8 @@ class EnrollmentResponse(BaseModel):
     site_code: str
     status: DeviceStatus
     enrollment_credential: str  # returned exactly once, at enrollment time only
+    server_time: datetime
+    offline_valid_until: datetime
 
 
 class VerifyDeviceRequest(BaseModel):
@@ -29,14 +33,8 @@ class VerifyDeviceResponse(BaseModel):
     organization_code: str
     site_code: str
     status: DeviceStatus
-
-
-class DeviceStatusResponse(BaseModel):
-    device_id: str
-    organization_code: str
-    site_code: str
-    status: DeviceStatus
-    last_verified_at: datetime | None
+    server_time: datetime
+    offline_valid_until: datetime
 
 
 class ErrorResponse(BaseModel):

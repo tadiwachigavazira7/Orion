@@ -7,7 +7,9 @@ class Base(DeclarativeBase):
 
 
 def build_engine(database_url: str) -> AsyncEngine:
-    return create_async_engine(database_url, pool_pre_ping=True)
+    # hide_parameters: SQL parameters (e.g. credential/authorization digests)
+    # never appear in exception messages or logs.
+    return create_async_engine(database_url, pool_pre_ping=True, hide_parameters=True)
 
 
 def build_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

@@ -12,6 +12,7 @@ import pytest_asyncio  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker  # noqa: E402
 
+from orion_backend.config import Settings  # noqa: E402
 from orion_backend.db.base import Base, build_engine, build_sessionmaker  # noqa: E402
 from orion_backend.main import create_app  # noqa: E402
 
@@ -19,6 +20,22 @@ TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
     "postgresql+asyncpg://orion:orion@localhost:55432/orion_test",
 )
+
+OFFLINE_AUTHORIZATION_HOURS = 24
+ENROLLMENT_AUTHORIZATION_TTL_MINUTES = 30
+
+
+def make_settings(**overrides: object) -> Settings:
+    """Explicit settings for tests - never read from a developer's .env."""
+    values: dict[str, object] = {
+        "database_url": TEST_DATABASE_URL,
+        "cors_origins": "",
+        "offline_authorization_hours": OFFLINE_AUTHORIZATION_HOURS,
+        "enrollment_authorization_ttl_minutes": ENROLLMENT_AUTHORIZATION_TTL_MINUTES,
+        "orion_environment": "test",
+    }
+    values.update(overrides)
+    return Settings(_env_file=None, **values)
 
 
 @pytest_asyncio.fixture
@@ -59,7 +76,7 @@ async def db_session(
 async def client(
     sessionmaker_: async_sessionmaker[AsyncSession],
 ) -> AsyncIterator[AsyncClient]:
-    app = create_app()
+    app = create_app(make_settings())
     # ASGITransport never fires FastAPI's lifespan, so app.state.sessionmaker
     # (normally set up in main.lifespan from DATABASE_URL) is wired directly
     # to this test's database sessionmaker instead.

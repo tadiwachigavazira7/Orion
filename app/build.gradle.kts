@@ -1,3 +1,6 @@
+import java.net.URI
+import java.net.URISyntaxException
+
 plugins {
     // AGP 9+ compiles Kotlin sources itself; org.jetbrains.kotlin.android is no
     // longer applied (and is incompatible with this DSL). The Compose compiler
@@ -5,6 +8,13 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
+
+// Release enrollment backend URL. Read at configuration time (no secret: a URL is not a
+// credential) so the validation task below can be a plain, configuration-cache-friendly check.
+val releaseEnrollmentBaseUrlProperty = "ORION_RELEASE_ENROLLMENT_BASE_URL"
+val releaseEnrollmentBaseUrl: String? =
+    (project.findProperty(releaseEnrollmentBaseUrlProperty) as String?)?.trim()?.takeIf { it.isNotEmpty() }
+        ?: System.getenv(releaseEnrollmentBaseUrlProperty)?.trim()?.takeIf { it.isNotEmpty() }
 
 android {
     namespace = "com.orion"
@@ -26,8 +36,10 @@ android {
 
     buildTypes {
         debug {
-            // Overridable via `-PORION_ENROLLMENT_BASE_URL=...` (e.g. to point a physical
-            // device on the LAN at a dev backend instead of the emulator). Defaults to the
+            // Overridable via `-PORION_ENROLLMENT_BASE_URL=...`. Note: the debug network security
+            // config permits cleartext ONLY to 10.0.2.2, so pointing a physical device at a LAN
+            // backend needs an https URL (or adding that host to
+            // src/debug/res/xml/network_security_config.xml). Defaults to the
             // Android emulator's host-loopback alias -- the verified address of the local
             // FastAPI enrollment backend as seen from inside the emulator, NOT
             // localhost/127.0.0.1 (which inside the emulator refers to the emulator itself).
@@ -41,11 +53,15 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // Deliberately empty, not a hardcoded local dev address: a release build with no
-            // configured backend falls back to UnconfiguredEnrollmentVerifier (see
-            // MainActivity), preserving "honest failure until a real backend is configured"
-            // for anything other than debug/emulator builds.
-            buildConfigField("String", "ENROLLMENT_BASE_URL", "\"\"")
+            // Supplied at build time via -PORION_RELEASE_ENROLLMENT_BASE_URL=https://... or the
+            // ORION_RELEASE_ENROLLMENT_BASE_URL environment variable. Never falls back to the
+            // emulator/dev URL: validateReleaseEnrollmentBaseUrl (below) fails every release
+            // build unless this is a valid https URL.
+            buildConfigField(
+                "String",
+                "ENROLLMENT_BASE_URL",
+                "\"${releaseEnrollmentBaseUrl.orEmpty().replace("\\", "\\\\").replace("\"", "\\\"")}\""
+            )
         }
     }
 
@@ -87,4 +103,41 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.org.json)
+}
+
+// Fails any release build (assemble/bundle/install/lint-vital/release unit tests -- everything
+// that runs preReleaseBuild) unless the release enrollment URL is a valid https URL. Debug
+// builds and :app:testDebugUnitTest never depend on it.
+val validateReleaseEnrollmentBaseUrl = tasks.register("validateReleaseEnrollmentBaseUrl") {
+    group = "verification"
+    description = "Fails unless $releaseEnrollmentBaseUrlProperty is a valid https URL."
+    val url = releaseEnrollmentBaseUrl
+    val propertyName = releaseEnrollmentBaseUrlProperty
+    doLast {
+        if (url == null) {
+            throw GradleException(
+                "Release builds require the enrollment backend URL. Pass " +
+                    "-P$propertyName=https://<host> or set the $propertyName environment variable."
+            )
+        }
+        val uri = try {
+            URI(url)
+        } catch (e: URISyntaxException) {
+            throw GradleException("$propertyName is not a valid URL: ${e.reason}")
+        }
+        if (!uri.scheme.equals("https", ignoreCase = true)) {
+            throw GradleException("$propertyName must use https (got scheme '${uri.scheme}').")
+        }
+        if (uri.host.isNullOrBlank()) {
+            throw GradleException("$propertyName must include a host name.")
+        }
+        if (uri.rawUserInfo != null || uri.rawQuery != null || uri.rawFragment != null) {
+            throw GradleException("$propertyName must not contain user info, a query, or a fragment.")
+        }
+        logger.lifecycle("Release enrollment backend URL validated: ${uri.scheme}://${uri.host}")
+    }
+}
+
+tasks.matching { it.name == "preReleaseBuild" }.configureEach {
+    dependsOn(validateReleaseEnrollmentBaseUrl)
 }

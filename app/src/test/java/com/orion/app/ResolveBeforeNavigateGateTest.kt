@@ -1,5 +1,7 @@
 package com.orion.app
 
+import com.orion.core.enrollment.FakeDeviceAccessGate
+
 import com.orion.core.inventory.FindInput
 import com.orion.core.inventory.ResolveTargetUseCase
 import com.orion.core.session.FindTagUseCase
@@ -41,7 +43,7 @@ class ResolveBeforeNavigateGateTest {
     private fun newViewModel(): FindFlowViewModel {
         val resolveTarget = ResolveTargetUseCase(FakeEpcLookup())
         val findTag = FindTagUseCase(FakeRfidReader(KNOWN_EPC))
-        return FindFlowViewModel(resolveTarget, findTag)
+        return FindFlowViewModel(resolveTarget, findTag, FakeDeviceAccessGate())
     }
 
     @Test

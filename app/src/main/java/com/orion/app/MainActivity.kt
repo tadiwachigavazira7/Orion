@@ -5,9 +5,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -24,94 +24,101 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.orion.BuildConfig
-import com.orion.core.enrollment.CheckEnrollmentUseCase
-import com.orion.core.enrollment.DeviceIdProvider
-import com.orion.core.enrollment.EnrollDeviceUseCase
+import com.orion.core.enrollment.DeviceAccessGate
+import com.orion.core.enrollment.DeviceAuthorizationState
 import com.orion.core.enrollment.EnrollmentVerifier
-import com.orion.core.enrollment.UnenrollDeviceUseCase
 import com.orion.core.inventory.FindInput
 import com.orion.core.inventory.ResolveTargetUseCase
 import com.orion.core.session.FindTagUseCase
+import com.orion.data.enrollment.AndroidConnectivityMonitor
 import com.orion.data.enrollment.AndroidDeviceIdProvider
 import com.orion.data.enrollment.DataStoreEnrollmentStore
 import com.orion.data.enrollment.HttpEnrollmentVerifier
+import com.orion.data.enrollment.SettingsBootIdentityProvider
+import com.orion.data.enrollment.SystemClockMonotonicClock
 import com.orion.data.enrollment.UnconfiguredEnrollmentVerifier
 import com.orion.integrations.fake.FakeEpcLookup
 import com.orion.integrations.fake.FakeRfidReader
+import kotlinx.coroutines.launch
 
 /**
  * Minimal, hand-rolled [ViewModelProvider.Factory] — this repo has no DI framework
  * (plain constructor injection is the existing pattern), so dependencies are
- * constructed by hand here rather than pulling in a DI library for one ViewModel.
+ * constructed by hand here rather than pulling in a DI library.
  */
 private class EnrollmentViewModelFactory(
-    private val checkEnrollment: CheckEnrollmentUseCase,
-    private val enrollDevice: EnrollDeviceUseCase,
-    private val unenrollDevice: UnenrollDeviceUseCase,
-    private val deviceIdProvider: DeviceIdProvider
+    private val create: () -> EnrollmentViewModel
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         @Suppress("UNCHECKED_CAST")
-        return EnrollmentViewModel(checkEnrollment, enrollDevice, unenrollDevice, deviceIdProvider) as T
+        return create() as T
     }
 }
 
 /**
- * Launch screen. Gates access to Orion on local device enrollment state
- * (CLAUDE.md-style hardware-agnostic entry point) — no employee login/ID/
- * session is ever involved in this gate. See core.enrollment for the domain
- * model and data.enrollment for the Android-specific implementations wired
- * here by hand, since this app has no DI framework.
+ * Launch screen. Gates find/navigation on device authorization: enrollment with
+ * Orion's enrollment backend, periodic online verification, and a server-issued,
+ * time-limited offline allowance (see core.enrollment.DeviceAuthorizationManager).
+ * No employee login/ID/session is ever involved. Android-specific implementations
+ * from data.enrollment are wired here by hand, since this app has no DI framework.
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val store = DataStoreEnrollmentStore(applicationContext)
-        // Real backend when BuildConfig.ENROLLMENT_BASE_URL is configured (debug/emulator
-        // builds by default; see app/build.gradle.kts), otherwise the honest placeholder --
-        // release builds ship an empty ENROLLMENT_BASE_URL until a real backend is wired up
-        // for that build type, rather than baking in a local dev address.
-        val verifier: EnrollmentVerifier = BuildConfig.ENROLLMENT_BASE_URL
-            .takeIf { it.isNotBlank() }
-            ?.let { HttpEnrollmentVerifier(baseUrl = it) }
-            ?: UnconfiguredEnrollmentVerifier()
-        val deviceIdProvider = AndroidDeviceIdProvider(contentResolver)
-        val factory = EnrollmentViewModelFactory(
-            checkEnrollment = CheckEnrollmentUseCase(store),
-            enrollDevice = EnrollDeviceUseCase(verifier, store),
-            unenrollDevice = UnenrollDeviceUseCase(store),
-            deviceIdProvider = deviceIdProvider
-        )
+        val factory = EnrollmentViewModelFactory {
+            // Release builds cannot be produced without a valid https ENROLLMENT_BASE_URL
+            // (validated in app/build.gradle.kts); debug builds default to the emulator host.
+            // UnconfiguredEnrollmentVerifier is only a defensive runtime fallback and never
+            // reports success.
+            val verifier: EnrollmentVerifier = BuildConfig.ENROLLMENT_BASE_URL
+                .takeIf { it.isNotBlank() }
+                ?.let { HttpEnrollmentVerifier(baseUrl = it) }
+                ?: UnconfiguredEnrollmentVerifier()
+            EnrollmentViewModel(
+                store = DataStoreEnrollmentStore(applicationContext),
+                verifier = verifier,
+                deviceIdProvider = AndroidDeviceIdProvider(applicationContext.contentResolver),
+                clock = SystemClockMonotonicClock(),
+                bootIdentity = SettingsBootIdentityProvider(applicationContext.contentResolver)
+            )
+        }
+        val enrollmentViewModel = ViewModelProvider(this, factory)[EnrollmentViewModel::class.java]
+
+        // Verification triggers run only while the app is in the foreground: the first
+        // STARTED covers app launch, later ones cover return-to-foreground; periodic and
+        // connectivity-return checks are cancelled with the STOPPED transition, which also
+        // unregisters the network callback.
+        val connectivity = AndroidConnectivityMonitor(applicationContext)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                enrollmentViewModel.runWhileForeground(connectivity.isConnected)
+            }
+        }
 
         setContent {
             MaterialTheme(colorScheme = lightColorScheme(background = Color.White, surface = Color.White)) {
                 var showSplash by rememberSaveable { mutableStateOf(true) }
-                val viewModel: EnrollmentViewModel = viewModel(factory = factory)
-                val state by viewModel.state.collectAsState()
+                val state by enrollmentViewModel.state.collectAsState()
 
                 if (showSplash) {
                     SplashScreen(onFinished = { showSplash = false })
                 } else {
-                    when (val enrollmentState = state) {
-                        is EnrollmentUiState.CheckingEnrollment -> CheckingEnrollmentScreen()
-                        is EnrollmentUiState.NeedsEnrollment,
-                        is EnrollmentUiState.NeedsReEnrollment,
-                        is EnrollmentUiState.Enrolling,
-                        is EnrollmentUiState.EnrollmentRejected,
-                        is EnrollmentUiState.EnrollmentFailed ->
-                            EnrollmentScreen(
-                                state = enrollmentState,
-                                onEnroll = { orgCode, siteCode -> viewModel.enroll(orgCode, siteCode) }
-                            )
-                        is EnrollmentUiState.Enrolled -> FindScreen()
-                    }
+                    DeviceAuthorizationRoute(
+                        state = state,
+                        deviceId = enrollmentViewModel.deviceId,
+                        accessGate = enrollmentViewModel.accessGate,
+                        onEnroll = enrollmentViewModel::enroll,
+                        onRetryVerification = enrollmentViewModel::retryVerification
+                    )
                 }
             }
         }
@@ -119,27 +126,68 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun CheckingEnrollmentScreen() {
-    Scaffold { padding ->
-        Surface(modifier = Modifier.fillMaxSize().padding(padding)) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+private fun DeviceAuthorizationRoute(
+    state: DeviceAuthorizationState,
+    deviceId: String?,
+    accessGate: DeviceAccessGate,
+    onEnroll: (String, String, String) -> Unit,
+    onRetryVerification: () -> Unit
+) {
+    when (state) {
+        DeviceAuthorizationState.Checking -> CheckingDeviceScreen()
+
+        is DeviceAuthorizationState.Authorized,
+        is DeviceAuthorizationState.OfflineAuthorized -> Column(modifier = Modifier.fillMaxSize()) {
+            if (state is DeviceAuthorizationState.OfflineAuthorized) {
+                OfflineAccessBanner(verificationPending = state.lastVerificationProblem == null)
             }
+            Box(modifier = Modifier.weight(1f)) { FindScreen(accessGate) }
         }
+
+        DeviceAuthorizationState.NotEnrolled,
+        DeviceAuthorizationState.Enrolling,
+        is DeviceAuthorizationState.EnrollmentRejected,
+        is DeviceAuthorizationState.EnrollmentFailed,
+        is DeviceAuthorizationState.RecoveryRequired,
+        DeviceAuthorizationState.InvalidCredential,
+        DeviceAuthorizationState.UnknownDevice ->
+            EnrollmentScreen(state = state, deviceId = deviceId, onEnroll = onEnroll)
+
+        DeviceAuthorizationState.ConnectionRequired -> DeviceBlockedScreen(
+            title = "Verification required",
+            message = "Connect to verify this device.",
+            actionLabel = "Try again",
+            onAction = onRetryVerification
+        )
+
+        DeviceAuthorizationState.Revoked -> DeviceBlockedScreen(
+            title = "Device revoked",
+            message = "This device's enrollment has been revoked. Contact an administrator.",
+            actionLabel = "Check again",
+            onAction = onRetryVerification
+        )
+
+        DeviceAuthorizationState.DeviceIdUnavailable -> DeviceBlockedScreen(
+            title = "Device identifier unavailable",
+            message = "Orion cannot read this device's identifier, so it cannot be enrolled. " +
+                "Contact an administrator."
+        )
     }
 }
 
 /**
  * Minimal, hand-rolled [ViewModelProvider.Factory] for [FindScreen] below —
- * same no-DI-framework pattern as [EnrollmentViewModelFactory].
+ * same no-DI-framework pattern as [EnrollmentViewModelFactory]. The FindFlowViewModel
+ * observes [DeviceAccessGate] and cancels any RFID session when access is lost.
  */
 private class FindFlowViewModelFactory(
     private val resolveTarget: ResolveTargetUseCase,
-    private val findTag: FindTagUseCase
+    private val findTag: FindTagUseCase,
+    private val accessGate: DeviceAccessGate
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         @Suppress("UNCHECKED_CAST")
-        return FindFlowViewModel(resolveTarget, findTag) as T
+        return FindFlowViewModel(resolveTarget, findTag, accessGate) as T
     }
 }
 
@@ -162,11 +210,12 @@ private const val DEMO_TARGET_EPC = "30245BFB8386AA80000186A1"
  * [CompassScreen] do not need to change to support that swap.
  */
 @Composable
-private fun FindScreen() {
-    val factory = remember {
+private fun FindScreen(accessGate: DeviceAccessGate) {
+    val factory = remember(accessGate) {
         FindFlowViewModelFactory(
             resolveTarget = ResolveTargetUseCase(FakeEpcLookup()),
-            findTag = FindTagUseCase(FakeRfidReader(DEMO_TARGET_EPC))
+            findTag = FindTagUseCase(FakeRfidReader(DEMO_TARGET_EPC)),
+            accessGate = accessGate
         )
     }
     val viewModel: FindFlowViewModel = viewModel(factory = factory)

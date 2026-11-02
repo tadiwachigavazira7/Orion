@@ -1,30 +1,77 @@
 package com.orion.data.enrollment
 
+import com.orion.core.enrollment.EnrollmentCredential
 import com.orion.core.enrollment.EnrollmentRequest
 import com.orion.core.enrollment.EnrollmentResult
+import com.orion.core.enrollment.ServerAuthorizationWindow
+import com.orion.core.enrollment.VerificationResult
 import kotlinx.coroutines.test.runTest
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
+import mockwebserver3.SocketEffect
 import okhttp3.OkHttpClient
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
+private const val AUTHORIZATION_SECRET = "one-time-enrollment-authorization-SECRET"
+private const val CREDENTIAL_SECRET = "plaintext-device-credential-SECRET"
+
 private val REQUEST = EnrollmentRequest(
     organizationCode = "TEST-ORG-001",
     siteCode = "TEST-SITE-001",
-    deviceId = "device-1"
+    deviceId = "device-1",
+    enrollmentAuthorization = AUTHORIZATION_SECRET
 )
 
+private val CREDENTIAL = EnrollmentCredential("TEST-ORG-001", "TEST-SITE-001", "device-1", CREDENTIAL_SECRET)
+
+private val EXPECTED_WINDOW = ServerAuthorizationWindow(
+    serverTimeEpochMs = java.time.Instant.parse("2026-11-02T12:00:00Z").toEpochMilli(),
+    offlineValidUntilEpochMs = java.time.Instant.parse("2026-11-03T12:00:00Z").toEpochMilli()
+)
+
+private fun enrolledBody(
+    deviceId: String = "device-1",
+    serverTime: String? = "2026-11-02T12:00:00Z",
+    validUntil: String? = "2026-11-03T12:00:00Z"
+): String = JSONObject()
+    .put("device_id", deviceId)
+    .put("organization_code", "TEST-ORG-001")
+    .put("site_code", "TEST-SITE-001")
+    .put("status", "ACTIVE")
+    .put("enrollment_credential", CREDENTIAL_SECRET)
+    .apply {
+        serverTime?.let { put("server_time", it) }
+        validUntil?.let { put("offline_valid_until", it) }
+    }
+    .toString()
+
+private fun verifiedBody(
+    verified: Boolean = true,
+    deviceId: String = "device-1",
+    status: String = "ACTIVE",
+    serverTime: String = "2026-11-02T12:00:00Z",
+    validUntil: String = "2026-11-03T12:00:00+00:00"
+): String = JSONObject()
+    .put("verified", verified)
+    .put("device_id", deviceId)
+    .put("organization_code", "TEST-ORG-001")
+    .put("site_code", "TEST-SITE-001")
+    .put("status", status)
+    .put("server_time", serverTime)
+    .put("offline_valid_until", validUntil)
+    .toString()
+
+private fun error(detail: String, code: String) = """{"detail":"$detail","error_code":"$code"}"""
+
 /**
- * Exercises [HttpEnrollmentVerifier]'s HTTP-status-code -> [EnrollmentResult] mapping
- * against a real (local, in-process) HTTP server via OkHttp's MockWebServer, rather than
- * re-implementing the mapping logic by hand in the test -- this is the behavior most likely
- * to be subtly wrong (e.g. which codes are Rejected vs Failure) and is exactly what a real
- * request/response round-trip should cover.
+ * Exercises every row of the enrollment v2 contract's Android mapping table against a
+ * real (in-process) HTTP server, rather than re-implementing the mapping in the test.
  */
 class HttpEnrollmentVerifierTest {
 
@@ -43,122 +90,282 @@ class HttpEnrollmentVerifierTest {
         server.close()
     }
 
-    @Test
-    fun `201 response maps to Approved with the documented field mapping`() = runTest {
-        server.enqueue(
-            MockResponse.Builder()
-                .code(201)
-                .body(
-                    """
-                    {
-                        "device_id": "device-1",
-                        "organization_code": "TEST-ORG-001",
-                        "site_code": "TEST-SITE-001",
-                        "status": "ACTIVE",
-                        "enrollment_credential": "opaque-secret"
-                    }
-                    """.trimIndent()
-                )
-                .build()
-        )
-
-        val result = verifier.verify(REQUEST)
-
-        assertTrue(result is EnrollmentResult.Approved)
-        val credential = (result as EnrollmentResult.Approved).credential
-        assertEquals("TEST-ORG-001", credential.organizationId)
-        assertEquals("TEST-SITE-001", credential.siteId)
-        assertEquals("device-1", credential.deviceId)
-        assertEquals("opaque-secret", credential.token)
-        assertNull(credential.expiresAt)
+    private fun respond(code: Int, body: String) {
+        server.enqueue(MockResponse.Builder().code(code).body(body).build())
     }
 
-    @Test
-    fun `sends the documented request body shape`() = runTest {
-        server.enqueue(
-            MockResponse.Builder()
-                .code(201)
-                .body(
-                    """{"device_id":"device-1","organization_code":"TEST-ORG-001","site_code":"TEST-SITE-001","status":"ACTIVE","enrollment_credential":"x"}"""
-                )
-                .build()
-        )
+    private fun assertNoSecrets(text: String) {
+        assertFalse("leaked enrollment authorization: $text", text.contains(AUTHORIZATION_SECRET))
+        assertFalse("leaked device credential: $text", text.contains(CREDENTIAL_SECRET))
+    }
 
-        verifier.verify(REQUEST)
+    // ------------------------------------------------------------------
+    // POST /enrollment
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `enroll sends all four contract fields including the authorization`() = runTest {
+        respond(201, enrolledBody())
+
+        verifier.enroll(REQUEST)
 
         val recorded = server.takeRequest()
         assertEquals("POST", recorded.method)
         assertEquals("/enrollment", recorded.target)
-        val sentBody = recorded.body?.utf8() ?: ""
-        assertTrue(sentBody.contains("\"organization_code\":\"TEST-ORG-001\""))
-        assertTrue(sentBody.contains("\"site_code\":\"TEST-SITE-001\""))
-        assertTrue(sentBody.contains("\"device_id\":\"device-1\""))
+        val sent = JSONObject(recorded.body!!.utf8())
+        assertEquals("TEST-ORG-001", sent.getString("organization_code"))
+        assertEquals("TEST-SITE-001", sent.getString("site_code"))
+        assertEquals("device-1", sent.getString("device_id"))
+        assertEquals(AUTHORIZATION_SECRET, sent.getString("enrollment_authorization"))
+        assertEquals(4, sent.length())
     }
 
     @Test
-    fun `404 organization_not_found maps to Rejected with the backend's detail message`() = runTest {
-        server.enqueue(
-            MockResponse.Builder()
-                .code(404)
-                .body("""{"detail":"Organization 'BAD-ORG' was not found.","error_code":"organization_not_found"}""")
-                .build()
+    fun `enroll 201 maps to Approved with credential and parsed server window`() = runTest {
+        respond(201, enrolledBody())
+
+        val result = verifier.enroll(REQUEST)
+
+        assertEquals(EnrollmentResult.Approved(CREDENTIAL, EXPECTED_WINDOW), result)
+    }
+
+    @Test
+    fun `enroll 201 that cannot be used maps to RecoveryRequired`() = runTest {
+        val unusable = listOf(
+            "not json",
+            enrolledBody(serverTime = null),
+            enrolledBody(validUntil = null),
+            enrolledBody(validUntil = "2026-11-02T11:00:00Z"), // before server_time
+            enrolledBody(serverTime = "yesterday"),
+            enrolledBody(deviceId = "someone-else")
         )
-
-        val result = verifier.verify(REQUEST)
-
-        assertTrue(result is EnrollmentResult.Rejected)
-        assertEquals("Organization 'BAD-ORG' was not found.", (result as EnrollmentResult.Rejected).reason)
+        for (body in unusable) {
+            respond(201, body)
+            val result = verifier.enroll(REQUEST)
+            assertTrue("body=$body result=$result", result is EnrollmentResult.RecoveryRequired)
+            assertNoSecrets((result as EnrollmentResult.RecoveryRequired).reason)
+        }
     }
 
     @Test
-    fun `409 device_already_enrolled maps to Rejected`() = runTest {
-        server.enqueue(
-            MockResponse.Builder()
-                .code(409)
-                .body("""{"detail":"Device 'device-1' is already enrolled.","error_code":"device_already_enrolled"}""")
-                .build()
-        )
+    fun `enroll 403 invalid_enrollment_authorization maps to Rejected`() = runTest {
+        respond(403, error("Enrollment authorization is invalid.", "invalid_enrollment_authorization"))
 
-        val result = verifier.verify(REQUEST)
+        val result = verifier.enroll(REQUEST)
 
-        assertTrue(result is EnrollmentResult.Rejected)
-        assertEquals("Device 'device-1' is already enrolled.", (result as EnrollmentResult.Rejected).reason)
+        assertEquals(EnrollmentResult.Rejected("Enrollment authorization is invalid."), result)
     }
 
     @Test
-    fun `unexpected status code maps to Failure, not Rejected`() = runTest {
-        server.enqueue(MockResponse.Builder().code(500).body("""{"detail":"boom"}""").build())
-
-        val result = verifier.verify(REQUEST)
-
-        assertTrue(result is EnrollmentResult.Failure)
+    fun `enroll 404 organization, site, and mismatch codes map to Rejected`() = runTest {
+        for (code in listOf("organization_not_found", "site_not_found", "site_organization_mismatch")) {
+            respond(404, error("Not found: $code", code))
+            assertEquals(EnrollmentResult.Rejected("Not found: $code"), verifier.enroll(REQUEST))
+        }
     }
 
     @Test
-    fun `malformed 201 body maps to Failure rather than throwing`() = runTest {
-        server.enqueue(MockResponse.Builder().code(201).body("not json").build())
+    fun `enroll 422 maps to Rejected so the user can correct input`() = runTest {
+        respond(422, """{"detail":[{"loc":["body","site_code"],"msg":"field required"}]}""")
 
-        val result = verifier.verify(REQUEST)
-
-        assertTrue(result is EnrollmentResult.Failure)
+        assertTrue(verifier.enroll(REQUEST) is EnrollmentResult.Rejected)
     }
 
     @Test
-    fun `rejection with unparsable body still produces a usable Rejected reason`() = runTest {
-        server.enqueue(MockResponse.Builder().code(404).body("not json").build())
+    fun `enroll 409 device_already_enrolled maps to RecoveryRequired`() = runTest {
+        respond(409, error("Device 'device-1' is already enrolled.", "device_already_enrolled"))
 
-        val result = verifier.verify(REQUEST)
-
-        assertTrue(result is EnrollmentResult.Rejected)
-        assertTrue((result as EnrollmentResult.Rejected).reason.isNotBlank())
+        assertEquals(EnrollmentResult.RecoveryRequired(ALREADY_ENROLLED_MESSAGE), verifier.enroll(REQUEST))
     }
 
     @Test
-    fun `unreachable server maps to Failure`() = runTest {
+    fun `enroll 5xx and undocumented responses map to Failure`() = runTest {
+        respond(500, """{"detail":"boom"}""")
+        assertTrue(verifier.enroll(REQUEST) is EnrollmentResult.Failure)
+        respond(503, "")
+        assertTrue(verifier.enroll(REQUEST) is EnrollmentResult.Failure)
+        respond(403, error("Forbidden", "something_else"))
+        assertTrue(verifier.enroll(REQUEST) is EnrollmentResult.Failure)
+        respond(404, "<html>Not Found</html>")
+        assertTrue(verifier.enroll(REQUEST) is EnrollmentResult.Failure)
+        respond(302, "")
+        assertTrue(verifier.enroll(REQUEST) is EnrollmentResult.Failure)
+    }
+
+    @Test
+    fun `enroll against an unreachable server maps to Failure`() = runTest {
         server.close()
 
-        val result = verifier.verify(REQUEST)
+        val result = verifier.enroll(REQUEST)
 
         assertTrue(result is EnrollmentResult.Failure)
+        assertNoSecrets((result as EnrollmentResult.Failure).reason)
+    }
+
+    @Test
+    fun `enroll response lost after the request was sent maps to RecoveryRequired, without retrying`() = runTest {
+        server.enqueue(MockResponse.Builder().onResponseStart(SocketEffect.ShutdownConnection).build())
+        respond(201, enrolledBody()) // must NOT be consumed by a silent retry
+
+        val result = verifier.enroll(REQUEST)
+
+        assertTrue("result=$result", result is EnrollmentResult.RecoveryRequired)
+        assertEquals("the single-use authorization was sent exactly once", 1, server.requestCount)
+    }
+
+    @Test
+    fun `server detail that echoes the authorization is not surfaced`() = runTest {
+        respond(403, error("Authorization $AUTHORIZATION_SECRET is invalid.", "invalid_enrollment_authorization"))
+
+        val result = verifier.enroll(REQUEST) as EnrollmentResult.Rejected
+
+        assertNoSecrets(result.reason)
+    }
+
+    @Test
+    fun `request toString redacts the authorization`() {
+        assertNoSecrets(REQUEST.toString())
+        assertNoSecrets(CREDENTIAL.toString())
+    }
+
+    // ------------------------------------------------------------------
+    // POST /enrolled_devices/{device_id}/verify
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `verify posts the credential to the device's verify endpoint`() = runTest {
+        respond(200, verifiedBody())
+
+        verifier.verify(CREDENTIAL)
+
+        val recorded = server.takeRequest()
+        assertEquals("POST", recorded.method)
+        assertEquals("/enrolled_devices/device-1/verify", recorded.target)
+        val sent = JSONObject(recorded.body!!.utf8())
+        assertEquals(CREDENTIAL_SECRET, sent.getString("enrollment_credential"))
+        assertEquals(1, sent.length())
+    }
+
+    @Test
+    fun `verify path-encodes the device id`() = runTest {
+        respond(200, verifiedBody(deviceId = "a/b c"))
+
+        verifier.verify(CREDENTIAL.copy(deviceId = "a/b c"))
+
+        assertEquals("/enrolled_devices/a%2Fb%20c/verify", server.takeRequest().target)
+    }
+
+    @Test
+    fun `verify 200 maps to Authorized with parsed server_time and offline_valid_until`() = runTest {
+        respond(200, verifiedBody())
+
+        assertEquals(VerificationResult.Authorized(EXPECTED_WINDOW), verifier.verify(CREDENTIAL))
+    }
+
+    @Test
+    fun `backend timestamps with microseconds and Z suffix are parsed on enroll and verify`() = runTest {
+        // Exact shape the FastAPI backend emits.
+        val serverTime = "2026-11-02T18:00:51.362197Z"
+        val validUntil = "2026-11-03T18:00:51.362197Z"
+        val expected = ServerAuthorizationWindow(
+            serverTimeEpochMs = java.time.Instant.parse(serverTime).toEpochMilli(),
+            offlineValidUntilEpochMs = java.time.Instant.parse(validUntil).toEpochMilli()
+        )
+
+        respond(201, enrolledBody(serverTime = serverTime, validUntil = validUntil))
+        assertEquals(EnrollmentResult.Approved(CREDENTIAL, expected), verifier.enroll(REQUEST))
+
+        respond(200, verifiedBody(serverTime = serverTime, validUntil = validUntil))
+        val verified = verifier.verify(CREDENTIAL) as VerificationResult.Authorized
+        assertEquals(expected, verified.window)
+        assertEquals(24 * 60 * 60 * 1000L, verified.window.durationMs)
+    }
+
+    @Test
+    fun `lost-response replay that the backend answers with 409 is RecoveryRequired`() = runTest {
+        // The backend checks device state before the authorization, so replaying a consumed
+        // authorization for an now-ACTIVE device returns 409 rather than 403.
+        server.enqueue(MockResponse.Builder().onResponseStart(SocketEffect.ShutdownConnection).build())
+        assertTrue(verifier.enroll(REQUEST) is EnrollmentResult.RecoveryRequired)
+
+        respond(409, error("Device 'device-1' is already enrolled.", "device_already_enrolled"))
+        assertEquals(EnrollmentResult.RecoveryRequired(ALREADY_ENROLLED_MESSAGE), verifier.enroll(REQUEST))
+    }
+
+    @Test
+    fun `verify 200 that is malformed or inconsistent maps to Unavailable`() = runTest {
+        val bad = listOf(
+            "not json",
+            verifiedBody(verified = false),
+            verifiedBody(deviceId = "device-2"),
+            verifiedBody(status = "REVOKED"),
+            verifiedBody(validUntil = "2026-11-02T12:00:00Z"), // zero-length window
+            verifiedBody(serverTime = "2026-11-02T12:00:00") // no zone
+        )
+        for (body in bad) {
+            respond(200, body)
+            val result = verifier.verify(CREDENTIAL)
+            assertTrue("body=$body result=$result", result is VerificationResult.Unavailable)
+        }
+    }
+
+    @Test
+    fun `verify 401 invalid_credential maps to InvalidCredential`() = runTest {
+        respond(401, error("Invalid credential.", "invalid_credential"))
+        assertEquals(VerificationResult.InvalidCredential, verifier.verify(CREDENTIAL))
+    }
+
+    @Test
+    fun `verify 403 device_revoked maps to Revoked`() = runTest {
+        respond(403, error("Device revoked.", "device_revoked"))
+        assertEquals(VerificationResult.Revoked, verifier.verify(CREDENTIAL))
+    }
+
+    @Test
+    fun `verify 404 device_not_found maps to UnknownDevice`() = runTest {
+        respond(404, error("Device not found.", "device_not_found"))
+        assertEquals(VerificationResult.UnknownDevice, verifier.verify(CREDENTIAL))
+    }
+
+    @Test
+    fun `verify denial statuses without the documented error_code are Unavailable, not denials`() = runTest {
+        for ((code, body) in listOf(
+            401 to "<html>proxy login</html>",
+            403 to error("Forbidden", "captive_portal"),
+            404 to "<html>Not Found</html>",
+            404 to error("Not found", "organization_not_found")
+        )) {
+            respond(code, body)
+            val result = verifier.verify(CREDENTIAL)
+            assertTrue("HTTP $code -> $result", result is VerificationResult.Unavailable)
+        }
+    }
+
+    @Test
+    fun `verify 5xx, redirects, and other statuses map to Unavailable`() = runTest {
+        for (code in listOf(500, 502, 503, 409, 422, 302)) {
+            server.enqueue(
+                MockResponse.Builder().code(code).addHeader("Location", "http://evil.example/").body("").build()
+            )
+            assertTrue("HTTP $code", verifier.verify(CREDENTIAL) is VerificationResult.Unavailable)
+        }
+        assertEquals("redirect was not followed", 6, server.requestCount)
+    }
+
+    @Test
+    fun `verify against an unreachable server maps to Unavailable without leaking the credential`() = runTest {
+        server.close()
+
+        val result = verifier.verify(CREDENTIAL)
+
+        assertTrue(result is VerificationResult.Unavailable)
+        assertNoSecrets((result as VerificationResult.Unavailable).reason)
+    }
+
+    @Test
+    fun `invalid base URL is reported, never a denial or success`() = runTest {
+        val broken = HttpEnrollmentVerifier(baseUrl = "not a url")
+        assertTrue(broken.verify(CREDENTIAL) is VerificationResult.Unavailable)
+        assertTrue(broken.enroll(REQUEST) is EnrollmentResult.Failure)
     }
 }
