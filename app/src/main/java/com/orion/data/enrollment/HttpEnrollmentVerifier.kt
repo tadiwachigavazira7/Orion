@@ -43,13 +43,28 @@ private const val MAX_RESPONSE_BYTES = 64L * 1024
 private const val ERROR_INVALID_ENROLLMENT_AUTHORIZATION = "invalid_enrollment_authorization"
 private val ENROLL_NOT_FOUND_CODES = setOf("organization_not_found", "site_not_found", "site_organization_mismatch")
 private const val ERROR_DEVICE_ALREADY_ENROLLED = "device_already_enrolled"
+private const val ERROR_DEVICE_LIMIT_REACHED = "device_limit_reached"
+private const val ERROR_SUBSCRIPTION_INACTIVE = "subscription_inactive"
+private const val ERROR_ENROLLMENT_RATE_LIMITED = "enrollment_rate_limited"
 private const val ERROR_DEVICE_NOT_FOUND = "device_not_found"
 private const val ERROR_INVALID_CREDENTIAL = "invalid_credential"
 private const val ERROR_DEVICE_REVOKED = "device_revoked"
 
 internal const val ALREADY_ENROLLED_MESSAGE =
-    "This device is already enrolled. Ask an administrator to reset this device, " +
-        "then enroll again with a new enrollment auth. code."
+    "This device is already enrolled. After an administrator resets this device, " +
+        "enroll again with your store's enrollment auth. code."
+
+// App-owned copy for invalid-code / capacity / subscription / rate-limit rejections: the server's
+// `detail` is deliberately not shown for these, so wording stays consistent and nothing
+// request-derived can ever be echoed back.
+internal const val INVALID_ENROLLMENT_CODE_MESSAGE =
+    "The enrollment auth. code was not accepted. Check it, or ask your store administrator for the current code."
+internal const val DEVICE_LIMIT_REACHED_MESSAGE =
+    "This store has reached its authorized device limit. Contact your store administrator."
+internal const val SUBSCRIPTION_INACTIVE_MESSAGE =
+    "This store's Orion subscription is not active. Contact your store administrator."
+internal const val ENROLLMENT_RATE_LIMITED_MESSAGE =
+    "Too many incorrect enrollment attempts. Wait a few minutes and try again."
 
 /**
  * [baseUrl] is e.g. `http://10.0.2.2:8000` (debug/emulator) or the release
@@ -74,9 +89,13 @@ class HttpEnrollmentVerifier(
      * | 201 (well-formed)                                | Approved         |
      * | 201 (unreadable) -- server approved, we can't use it | RecoveryRequired |
      * | 403 invalid_enrollment_authorization, 404 org/site codes, 422 | Rejected |
+     * | 403 subscription_inactive, 409 device_limit_reached, 429 enrollment_rate_limited | Rejected (app-owned message) |
      * | 409 device_already_enrolled                      | RecoveryRequired |
      * | I/O failure after the request was sent (outcome unknown) | RecoveryRequired |
      * | I/O failure before sending, 5xx, anything else   | Failure          |
+     *
+     * `enrollment_authorization` carries the store's reusable enrollment code (typed by
+     * the employee); the server normalizes it, so it is sent as entered (trimmed only).
      */
     override suspend fun enroll(request: EnrollmentRequest): EnrollmentResult = withContext(Dispatchers.IO) {
         val url = endpoint("enrollment")
@@ -89,11 +108,11 @@ class HttpEnrollmentVerifier(
             .toString()
             .toRequestBody(JSON_MEDIA_TYPE)
 
-        // Track whether the request reached the wire, so a lost response (server may
-        // have consumed the authorization) is distinguishable from "never sent".
+        // Track whether the request reached the wire, so a lost response (the server may
+        // already have activated the device) is distinguishable from "never sent".
         val requestSent = AtomicBoolean(false)
         val enrollClient = client.newBuilder()
-            .retryOnConnectionFailure(false) // never silently resend a single-use authorization
+            .retryOnConnectionFailure(false) // never silently resend: a lost response must surface as "outcome unknown"
             .eventListener(object : EventListener() {
                 override fun requestHeadersStart(call: Call) {
                     requestSent.set(true)
@@ -164,10 +183,7 @@ class HttpEnrollmentVerifier(
                 )
 
             response.code == 403 && errorCode == ERROR_INVALID_ENROLLMENT_AUTHORIZATION ->
-                EnrollmentResult.Rejected(
-                    safeDetail(json, request)
-                        ?: "The enrollment auth. code was not accepted. Check it, or ask an administrator for a new one."
-                )
+                EnrollmentResult.Rejected(INVALID_ENROLLMENT_CODE_MESSAGE)
 
             response.code == 404 && errorCode in ENROLL_NOT_FOUND_CODES ->
                 EnrollmentResult.Rejected(
@@ -177,8 +193,19 @@ class HttpEnrollmentVerifier(
             response.code == 422 ->
                 EnrollmentResult.Rejected("The enrollment request was incomplete. Fill in every field and try again.")
 
+            response.code == 403 && errorCode == ERROR_SUBSCRIPTION_INACTIVE ->
+                EnrollmentResult.Rejected(SUBSCRIPTION_INACTIVE_MESSAGE)
+
+            // Capacity is a store-level limit, not this device's state: never RecoveryRequired.
+            response.code == 409 && errorCode == ERROR_DEVICE_LIMIT_REACHED ->
+                EnrollmentResult.Rejected(DEVICE_LIMIT_REACHED_MESSAGE)
+
             response.code == 409 && errorCode == ERROR_DEVICE_ALREADY_ENROLLED ->
                 EnrollmentResult.RecoveryRequired(ALREADY_ENROLLED_MESSAGE)
+
+            // Temporary; the user may retry later. Retry-After is not needed for the static copy.
+            response.code == 429 && errorCode == ERROR_ENROLLMENT_RATE_LIMITED ->
+                EnrollmentResult.Rejected(ENROLLMENT_RATE_LIMITED_MESSAGE)
 
             else -> EnrollmentResult.Failure("Unexpected response from the enrollment backend (HTTP ${response.code}).")
         }
@@ -232,9 +259,14 @@ class HttpEnrollmentVerifier(
     /** Server `detail` text, unless it would echo the submitted authorization back to the screen. */
     private fun safeDetail(json: JSONObject?, request: EnrollmentRequest): String? {
         val detail = json?.nonBlankString("detail") ?: return null
-        val secret = request.enrollmentAuthorization
-        return detail.takeUnless { secret.isNotEmpty() && detail.contains(secret) }
+        // The server normalizes the store code, so an echo may differ in case, hyphens, or
+        // spacing; compare normalized forms on both sides.
+        val secret = normalizeForLeakCheck(request.enrollmentAuthorization)
+        return detail.takeUnless { secret.isNotEmpty() && normalizeForLeakCheck(it).contains(secret) }
     }
+
+    private fun normalizeForLeakCheck(value: String): String =
+        value.uppercase().filterNot { it == '-' || it.isWhitespace() }
 
     private fun readJson(response: Response): JSONObject? =
         try {

@@ -22,7 +22,9 @@ TEST_DATABASE_URL = os.environ.get(
 )
 
 OFFLINE_AUTHORIZATION_HOURS = 24
-ENROLLMENT_AUTHORIZATION_TTL_MINUTES = 30
+RATE_LIMIT_WINDOW_MINUTES = 15
+RATE_LIMIT_MAX_FAILURES_PER_CLIENT = 5
+RATE_LIMIT_MAX_FAILURES_PER_SITE = 50
 
 
 def make_settings(**overrides: object) -> Settings:
@@ -31,7 +33,9 @@ def make_settings(**overrides: object) -> Settings:
         "database_url": TEST_DATABASE_URL,
         "cors_origins": "",
         "offline_authorization_hours": OFFLINE_AUTHORIZATION_HOURS,
-        "enrollment_authorization_ttl_minutes": ENROLLMENT_AUTHORIZATION_TTL_MINUTES,
+        "enrollment_rate_limit_window_minutes": RATE_LIMIT_WINDOW_MINUTES,
+        "enrollment_rate_limit_max_failures_per_client": RATE_LIMIT_MAX_FAILURES_PER_CLIENT,
+        "enrollment_rate_limit_max_failures_per_site": RATE_LIMIT_MAX_FAILURES_PER_SITE,
         "orion_environment": "test",
     }
     values.update(overrides)

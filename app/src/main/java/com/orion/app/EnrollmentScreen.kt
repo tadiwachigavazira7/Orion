@@ -43,7 +43,7 @@ fun EnrollmentScreen(
 ) {
     var organizationCode by remember { mutableStateOf("") }
     var siteCode by remember { mutableStateOf("") }
-    // Plain remember (not rememberSaveable): the one-time secret must not be written
+    // Plain remember (not rememberSaveable): the store's enrollment code is a secret and must not be written
     // into the saved-instance-state Bundle.
     var enrollmentAuthorization by remember { mutableStateOf("") }
 
@@ -104,10 +104,7 @@ fun EnrollmentScreen(
                 Button(
                     onClick = { onEnroll(organizationCode, siteCode, enrollmentAuthorization) },
                     modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-                    enabled = !enrolling &&
-                        organizationCode.isNotBlank() &&
-                        siteCode.isNotBlank() &&
-                        enrollmentAuthorization.isNotBlank()
+                    enabled = canSubmitEnrollment(state, organizationCode, siteCode, enrollmentAuthorization)
                 ) {
                     Text("Enroll")
                 }
@@ -123,6 +120,7 @@ fun EnrollmentScreen(
 
                     is DeviceAuthorizationState.EnrollmentRejected -> ErrorText("Enrollment was rejected: ${state.reason}")
                     is DeviceAuthorizationState.EnrollmentFailed -> ErrorText("Enrollment failed: ${state.reason}")
+                    // Each RecoveryRequired reason carries its own remedy, so no separate hint is shown.
                     is DeviceAuthorizationState.RecoveryRequired -> ErrorText(state.reason)
                     else -> Unit
                 }
@@ -131,15 +129,28 @@ fun EnrollmentScreen(
     }
 }
 
+/**
+ * Enroll is offered only when every field has non-whitespace content and no attempt is
+ * in flight. Values are not otherwise normalized here: the server normalizes the store code.
+ */
+internal fun canSubmitEnrollment(
+    state: DeviceAuthorizationState,
+    organizationCode: String,
+    siteCode: String,
+    enrollmentAuthCode: String
+): Boolean =
+    state !is DeviceAuthorizationState.Enrolling &&
+        organizationCode.isNotBlank() &&
+        siteCode.isNotBlank() &&
+        enrollmentAuthCode.isNotBlank()
+
 private fun contextMessage(state: DeviceAuthorizationState): String? = when (state) {
     DeviceAuthorizationState.InvalidCredential ->
-        "This device's enrollment is no longer accepted. If an administrator has reset this " +
-            "device, enter the codes and the new enrollment auth. code they provided."
+        "This device's enrollment is no longer accepted. After an administrator resets this " +
+            "device, enroll again with your store's enrollment auth. code."
     DeviceAuthorizationState.UnknownDevice ->
-        "The enrollment service does not recognise this device. Ask an administrator for an " +
-            "enrollment auth. code, then enroll again."
-    is DeviceAuthorizationState.RecoveryRequired ->
-        "After an administrator resets this device, enter the new enrollment auth. code."
+        "The enrollment service does not recognise this device. Enroll again with your " +
+            "store's enrollment auth. code."
     else -> null
 }
 

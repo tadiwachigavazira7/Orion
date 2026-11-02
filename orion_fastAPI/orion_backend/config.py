@@ -23,9 +23,13 @@ class Settings(BaseSettings):
     # it as offline_valid_until; the device never extends it on its own.
     offline_authorization_hours: int = Field(default=24, gt=0)
 
-    # Lifetime of an operator-issued enrollment authorization. An
-    # implementation default, not an approved business requirement.
-    enrollment_authorization_ttl_minutes: int = Field(default=30, gt=0)
+    # DB-backed rate limiting of failed store-code attempts (sliding window).
+    # Per (site, client IP), plus a per-site ceiling that bounds distributed
+    # guessing. Client IP is the direct peer address; proxy headers are not
+    # trusted (see OPERATIONS.md).
+    enrollment_rate_limit_window_minutes: int = Field(default=15, gt=0)
+    enrollment_rate_limit_max_failures_per_client: int = Field(default=5, gt=0)
+    enrollment_rate_limit_max_failures_per_site: int = Field(default=50, gt=0)
 
     # Deliberately has no default: tooling that is only safe in development
     # (scripts/seed_dev_data.py) refuses to run unless this is explicitly

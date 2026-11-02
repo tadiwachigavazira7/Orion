@@ -9,7 +9,8 @@ class EnrollmentRequest(BaseModel):
     organization_code: str = Field(min_length=1, max_length=128)
     site_code: str = Field(min_length=1, max_length=128)
     device_id: str = Field(min_length=1, max_length=128)
-    # Operator-issued, short-lived, single-use secret (see OPERATIONS.md).
+    # The store's reusable enrollment code (field name kept from v2 for
+    # client compatibility). Normalized server-side; see OPERATIONS.md.
     enrollment_authorization: str = Field(min_length=1, max_length=256)
 
 

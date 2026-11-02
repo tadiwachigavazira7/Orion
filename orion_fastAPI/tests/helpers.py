@@ -1,52 +1,100 @@
-from datetime import UTC, datetime, timedelta
+import uuid
+from dataclasses import dataclass
+from datetime import datetime
 
-from httpx import AsyncClient, Response
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from httpx import ASGITransport, AsyncClient, Response
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from orion_backend.db.models import EnrolledDevice, EnrollmentAuthorization, Organization, Site
-from orion_backend.services import enrollment_authorization_service
-from orion_backend.services.enrollment_authorization_service import hash_authorization_secret
+from orion_backend.db.models import (
+    AdminAuditEvent,
+    EnrolledDevice,
+    Organization,
+    Site,
+    SiteSubscription,
+    SubscriptionStatus,
+)
+from orion_backend.main import create_app
+from orion_backend.services import admin_service
+from orion_backend.services.audit_service import Actor
+from orion_backend.services.credential_hasher import Argon2CredentialHasher
 
 DEFAULT_ORGANIZATION_CODE = "TEST-ORG-001"
 DEFAULT_SITE_CODE = "TEST-SITE-001"
+TEST_ACTOR = Actor(name="pytest-operator", source="flag")
 
 
-async def create_organization_and_site(
+@dataclass(frozen=True)
+class Store:
+    """Plain values (no ORM objects, which expire between requests)."""
+
+    organization_code: str
+    site_code: str
+    organization_id: uuid.UUID
+    site_id: uuid.UUID
+    # Store enrollment code in display form; None if never generated.
+    code: str | None
+
+
+async def create_store(
     db_session: AsyncSession,
     organization_code: str = DEFAULT_ORGANIZATION_CODE,
     site_code: str = DEFAULT_SITE_CODE,
-) -> tuple[Organization, Site]:
-    organization = Organization(organization_code=organization_code, name="Test Organization")
-    db_session.add(organization)
-    await db_session.commit()
-    await db_session.refresh(organization)
-
-    site = Site(site_code=site_code, organization_id=organization.id)
-    db_session.add(site)
-    await db_session.commit()
-    await db_session.refresh(site)
-
-    return organization, site
-
-
-async def issue_authorization(
-    db_session: AsyncSession,
-    device_id: str,
-    organization_code: str = DEFAULT_ORGANIZATION_CODE,
-    site_code: str = DEFAULT_SITE_CODE,
-    ttl_minutes: int = 30,
-) -> str:
-    issued = await enrollment_authorization_service.issue_authorization(
-        db_session, organization_code, site_code, device_id, ttl_minutes=ttl_minutes
+    *,
+    status: SubscriptionStatus = SubscriptionStatus.PILOT,
+    additional_slots: int = 0,
+    with_code: bool = True,
+) -> Store:
+    """Create (or reuse) the organization, then a new site with a
+    subscription and, by default, a store enrollment code - all through the
+    operator services."""
+    await admin_service.create_organization(
+        db_session, organization_code, "Test Organization", TEST_ACTOR
     )
-    return issued.secret
+    await admin_service.create_site(db_session, organization_code, site_code, TEST_ACTOR, status)
+    if additional_slots:
+        await admin_service.set_additional_slots(
+            db_session, organization_code, site_code, additional_slots, TEST_ACTOR
+        )
+    code = None
+    if with_code:
+        code = await rotate_code(db_session, organization_code, site_code)
+
+    db_session.expire_all()
+    organization = (
+        await db_session.execute(
+            select(Organization).where(Organization.organization_code == organization_code)
+        )
+    ).scalar_one()
+    site = (
+        await db_session.execute(
+            select(Site).where(Site.organization_id == organization.id, Site.site_code == site_code)
+        )
+    ).scalar_one()
+    return Store(
+        organization_code=organization.organization_code,
+        site_code=site.site_code,
+        organization_id=organization.id,
+        site_id=site.id,
+        code=code,
+    )
+
+
+async def rotate_code(
+    db_session: AsyncSession,
+    organization_code: str = DEFAULT_ORGANIZATION_CODE,
+    site_code: str = DEFAULT_SITE_CODE,
+) -> str:
+    rotated = await admin_service.rotate_enrollment_code(
+        db_session, Argon2CredentialHasher(), organization_code, site_code, TEST_ACTOR
+    )
+    return rotated.code
 
 
 async def enroll(
     client: AsyncClient,
-    device_id: str = "PDT-100",
-    enrollment_authorization: str = "not-a-real-authorization",
+    device_id: str,
+    code: str | None,
     organization_code: str = DEFAULT_ORGANIZATION_CODE,
     site_code: str = DEFAULT_SITE_CODE,
 ) -> Response:
@@ -56,20 +104,15 @@ async def enroll(
             "organization_code": organization_code,
             "site_code": site_code,
             "device_id": device_id,
-            "enrollment_authorization": enrollment_authorization,
+            "enrollment_authorization": code or "WRONG-CODE-00000",
         },
     )
 
 
-async def authorize_and_enroll(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    device_id: str,
-    organization_code: str = DEFAULT_ORGANIZATION_CODE,
-    site_code: str = DEFAULT_SITE_CODE,
-) -> Response:
-    secret = await issue_authorization(db_session, device_id, organization_code, site_code)
-    return await enroll(client, device_id, secret, organization_code, site_code)
+async def enroll_at(client: AsyncClient, store: Store, device_id: str, code: str | None = None) -> Response:
+    return await enroll(
+        client, device_id, code or store.code, store.organization_code, store.site_code
+    )
 
 
 async def verify(client: AsyncClient, device_id: str, credential: str) -> Response:
@@ -88,23 +131,45 @@ async def fetch_device(db_session: AsyncSession, device_id: str) -> EnrolledDevi
     return result.scalar_one_or_none()
 
 
-async def fetch_authorization(db_session: AsyncSession, secret: str) -> EnrollmentAuthorization:
+async def fetch_subscription(db_session: AsyncSession, site_id: uuid.UUID) -> SiteSubscription:
     db_session.expire_all()
-    result = await db_session.execute(
-        select(EnrollmentAuthorization).where(
-            EnrollmentAuthorization.secret_hash == hash_authorization_secret(secret)
-        )
-    )
-    return result.scalar_one()
+    return (
+        await db_session.execute(select(SiteSubscription).where(SiteSubscription.site_id == site_id))
+    ).scalar_one()
 
 
-async def expire_authorization(db_session: AsyncSession, secret: str) -> None:
-    await db_session.execute(
-        update(EnrollmentAuthorization)
-        .where(EnrollmentAuthorization.secret_hash == hash_authorization_secret(secret))
-        .values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+async def fetch_site(db_session: AsyncSession, site_id: uuid.UUID) -> Site:
+    db_session.expire_all()
+    return (await db_session.execute(select(Site).where(Site.id == site_id))).scalar_one()
+
+
+async def count_devices(db_session: AsyncSession, site_id: uuid.UUID) -> int:
+    db_session.expire_all()
+    return len(
+        (await db_session.execute(select(EnrolledDevice).where(EnrolledDevice.site_id == site_id)))
+        .scalars()
+        .all()
     )
-    await db_session.commit()
+
+
+async def audit_events(db_session: AsyncSession, action: str | None = None) -> list[AdminAuditEvent]:
+    db_session.expire_all()
+    statement = select(AdminAuditEvent).order_by(AdminAuditEvent.occurred_at)
+    if action is not None:
+        statement = statement.where(AdminAuditEvent.action == action)
+    return list((await db_session.execute(statement)).scalars().all())
+
+
+def make_client(
+    sessionmaker_: async_sessionmaker[AsyncSession], client_ip: str = "127.0.0.1", **settings
+) -> AsyncClient:
+    from tests.conftest import make_settings
+
+    app = create_app(make_settings(**settings))
+    app.state.sessionmaker = sessionmaker_
+    return AsyncClient(
+        transport=ASGITransport(app=app, client=(client_ip, 50000)), base_url="http://test"
+    )
 
 
 def parse_timestamp(value: str) -> datetime:

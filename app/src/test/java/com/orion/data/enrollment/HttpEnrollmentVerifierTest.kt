@@ -18,7 +18,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
-private const val AUTHORIZATION_SECRET = "one-time-enrollment-authorization-SECRET"
+private const val AUTHORIZATION_SECRET = "K7Q2M-9XW4T-STORE-CODE-SECRET"
 private const val CREDENTIAL_SECRET = "plaintext-device-credential-SECRET"
 
 private val REQUEST = EnrollmentRequest(
@@ -148,12 +148,22 @@ class HttpEnrollmentVerifierTest {
     }
 
     @Test
-    fun `enroll 403 invalid_enrollment_authorization maps to Rejected`() = runTest {
+    fun `enroll 403 invalid_enrollment_authorization maps to Rejected with the app-owned message`() = runTest {
         respond(403, error("Enrollment authorization is invalid.", "invalid_enrollment_authorization"))
 
         val result = verifier.enroll(REQUEST)
 
-        assertEquals(EnrollmentResult.Rejected("Enrollment authorization is invalid."), result)
+        assertEquals(EnrollmentResult.Rejected(INVALID_ENROLLMENT_CODE_MESSAGE), result)
+    }
+
+    @Test
+    fun `server detail echoing a normalized form of the store code is not surfaced`() = runTest {
+        // Secret "K7Q2M-9XW4T-STORE-CODE-SECRET", echoed the way a normalizing server might.
+        respond(404, error("Unknown site for code k7q2m 9xw4tstore-codesecret", "site_not_found"))
+
+        val result = verifier.enroll(REQUEST)
+
+        assertEquals(EnrollmentResult.Rejected("The organization or site code was not recognised."), result)
     }
 
     @Test
@@ -176,6 +186,88 @@ class HttpEnrollmentVerifierTest {
         respond(409, error("Device 'device-1' is already enrolled.", "device_already_enrolled"))
 
         assertEquals(EnrollmentResult.RecoveryRequired(ALREADY_ENROLLED_MESSAGE), verifier.enroll(REQUEST))
+    }
+
+    @Test
+    fun `enroll 409 device_limit_reached is a capacity Rejected, never RecoveryRequired`() = runTest {
+        respond(409, error("Device limit reached for site TEST-SITE-001 ($AUTHORIZATION_SECRET).", "device_limit_reached"))
+
+        val result = verifier.enroll(REQUEST)
+
+        assertEquals(EnrollmentResult.Rejected(DEVICE_LIMIT_REACHED_MESSAGE), result)
+        assertEquals(
+            "This store has reached its authorized device limit. Contact your store administrator.",
+            (result as EnrollmentResult.Rejected).reason
+        )
+        assertNoSecrets(result.reason)
+    }
+
+    @Test
+    fun `409 device_already_enrolled and device_limit_reached map to different outcomes`() = runTest {
+        respond(409, error("Device 'device-1' is already enrolled.", "device_already_enrolled"))
+        assertTrue(verifier.enroll(REQUEST) is EnrollmentResult.RecoveryRequired)
+        respond(409, error("Device limit reached.", "device_limit_reached"))
+        assertTrue(verifier.enroll(REQUEST) is EnrollmentResult.Rejected)
+    }
+
+    @Test
+    fun `enroll 403 subscription_inactive maps to Rejected with the app-owned message`() = runTest {
+        respond(403, error("Subscription for site is SUSPENDED.", "subscription_inactive"))
+
+        val result = verifier.enroll(REQUEST)
+
+        assertEquals(
+            EnrollmentResult.Rejected("This store's Orion subscription is not active. Contact your store administrator."),
+            result
+        )
+    }
+
+    @Test
+    fun `enroll 429 enrollment_rate_limited with Retry-After maps to a temporary Rejected`() = runTest {
+        server.enqueue(
+            MockResponse.Builder()
+                .code(429)
+                .addHeader("Retry-After", "300")
+                .body(error("Too many failed attempts for $AUTHORIZATION_SECRET.", "enrollment_rate_limited"))
+                .build()
+        )
+
+        val result = verifier.enroll(REQUEST)
+
+        assertEquals(
+            EnrollmentResult.Rejected("Too many incorrect enrollment attempts. Wait a few minutes and try again."),
+            result
+        )
+        assertNoSecrets((result as EnrollmentResult.Rejected).reason)
+    }
+
+    @Test
+    fun `429 without the documented error_code is not mistaken for the rate-limit rejection`() = runTest {
+        respond(429, "<html>slow down</html>")
+        assertTrue(verifier.enroll(REQUEST) is EnrollmentResult.Failure)
+    }
+
+    @Test
+    fun `no enrollment outcome message ever contains the store code`() = runTest {
+        val responses = listOf(
+            403 to error("bad code $AUTHORIZATION_SECRET", "invalid_enrollment_authorization"),
+            403 to error("inactive $AUTHORIZATION_SECRET", "subscription_inactive"),
+            404 to error("no org $AUTHORIZATION_SECRET", "organization_not_found"),
+            409 to error("limit $AUTHORIZATION_SECRET", "device_limit_reached"),
+            409 to error("enrolled $AUTHORIZATION_SECRET", "device_already_enrolled"),
+            429 to error("slow $AUTHORIZATION_SECRET", "enrollment_rate_limited"),
+            500 to error("boom $AUTHORIZATION_SECRET", "internal_error")
+        )
+        for ((code, body) in responses) {
+            respond(code, body)
+            val reason = when (val r = verifier.enroll(REQUEST)) {
+                is EnrollmentResult.Rejected -> r.reason
+                is EnrollmentResult.RecoveryRequired -> r.reason
+                is EnrollmentResult.Failure -> r.reason
+                is EnrollmentResult.Approved -> throw AssertionError("unexpected approval for HTTP $code")
+            }
+            assertNoSecrets(reason)
+        }
     }
 
     @Test
@@ -210,7 +302,7 @@ class HttpEnrollmentVerifierTest {
         val result = verifier.enroll(REQUEST)
 
         assertTrue("result=$result", result is EnrollmentResult.RecoveryRequired)
-        assertEquals("the single-use authorization was sent exactly once", 1, server.requestCount)
+        assertEquals("the enrollment request was sent exactly once (no silent resend)", 1, server.requestCount)
     }
 
     @Test
@@ -283,8 +375,8 @@ class HttpEnrollmentVerifierTest {
 
     @Test
     fun `lost-response replay that the backend answers with 409 is RecoveryRequired`() = runTest {
-        // The backend checks device state before the authorization, so replaying a consumed
-        // authorization for an now-ACTIVE device returns 409 rather than 403.
+        // The backend checks device state before the store code, so replaying the enrollment
+        // for a device that is now ACTIVE returns 409 rather than a code/capacity error.
         server.enqueue(MockResponse.Builder().onResponseStart(SocketEffect.ShutdownConnection).build())
         assertTrue(verifier.enroll(REQUEST) is EnrollmentResult.RecoveryRequired)
 

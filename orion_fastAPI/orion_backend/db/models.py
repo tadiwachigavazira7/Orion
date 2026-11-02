@@ -2,17 +2,20 @@ import enum
 import uuid
 from datetime import datetime
 
+from typing import Any
+
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     Enum as SAEnum,
     ForeignKey,
     Index,
+    Integer,
     String,
     UniqueConstraint,
     func,
-    text,
 )
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from orion_backend.db.base import Base
@@ -114,6 +117,15 @@ class Site(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
+    # The store enrollment code: one reusable, rotatable secret per site,
+    # stored only as an Argon2id hash (services/store_code_service.py).
+    # NULL until an operator runs rotate-enrollment-code; enrollment at a
+    # site without a code is rejected.
+    enrollment_code_hash: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    enrollment_code_rotated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     organization: Mapped["Organization"] = relationship(back_populates="sites")
 
     __table_args__ = (
@@ -121,50 +133,118 @@ class Site(Base):
     )
 
 
-class EnrollmentAuthorization(Base):
-    """A short-lived, single-use, operator-issued permission for one specific
-    device_id to enroll at one specific organization/site.
+class SubscriptionStatus(str, enum.Enum):
+    """Commercial status of a site. Only PILOT and ACTIVE allow new
+    enrollments; no status affects verification of already-enrolled devices."""
 
-    Only a SHA-256 hex digest of the secret is stored (never the plaintext).
-    A fast digest is acceptable here, unlike for device credentials (Argon2id),
-    because the secret is 256 bits from secrets.token_urlsafe(32): it cannot be
-    brute-forced, and a deterministic digest enables an indexed lookup plus an
-    atomic conditional UPDATE when the authorization is consumed.
+    INACTIVE = "INACTIVE"
+    PILOT = "PILOT"
+    ACTIVE = "ACTIVE"
+    SUSPENDED = "SUSPENDED"
 
-    At most one *outstanding* (neither consumed nor invalidated) authorization
-    may exist per device_id - enforced by a partial unique index, so concurrent
-    issuance cannot leave two live authorizations for the same device.
+
+ENROLLABLE_SUBSCRIPTION_STATUSES = frozenset({SubscriptionStatus.PILOT, SubscriptionStatus.ACTIVE})
+DEFAULT_INCLUDED_DEVICE_SLOTS = 6
+
+
+class SiteSubscription(Base):
+    """Device capacity for one site (1:1 with sites).
+
+    total_authorized_slots = included_device_slots + additional_device_slots
+    is derived, never stored or edited separately. Only ACTIVE devices count
+    against it. Capacity only ever changes through an explicit operator
+    command; nothing increases it automatically.
     """
 
-    __tablename__ = "enrollment_authorizations"
+    __tablename__ = "site_subscriptions"
 
     id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    organization_id: Mapped[uuid.UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
-    )
     site_id: Mapped[uuid.UUID] = mapped_column(
-        PGUUID(as_uuid=True), ForeignKey("sites.id"), nullable=False
+        PGUUID(as_uuid=True), ForeignKey("sites.id"), unique=True, nullable=False
     )
-    # The intended device. Deliberately not a FK: a first-time device has no
-    # enrolled_devices row yet.
-    device_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    secret_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    invalidated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+    status: Mapped[SubscriptionStatus] = mapped_column(
+        SAEnum(SubscriptionStatus, name="subscription_status", native_enum=True),
+        nullable=False,
+        default=SubscriptionStatus.INACTIVE,
+    )
+    included_device_slots: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=DEFAULT_INCLUDED_DEVICE_SLOTS, server_default="6"
+    )
+    additional_device_slots: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    status_changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
     __table_args__ = (
-        Index(
-            "uq_enrollment_authorizations_outstanding_device_id",
-            "device_id",
-            unique=True,
-            postgresql_where=text("consumed_at IS NULL AND invalidated_at IS NULL"),
+        CheckConstraint("included_device_slots >= 0", name="ck_site_subscriptions_included_nonnegative"),
+        CheckConstraint(
+            "additional_device_slots >= 0", name="ck_site_subscriptions_additional_nonnegative"
         ),
     )
+
+    @property
+    def total_authorized_slots(self) -> int:
+        return self.included_device_slots + self.additional_device_slots
+
+
+class EnrollmentAttemptFailure(Base):
+    """One failed store-code attempt, used for DB-backed rate limiting
+    (works across workers). Never stores the submitted code."""
+
+    __tablename__ = "enrollment_attempt_failures"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    site_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("sites.id"), nullable=False
+    )
+    client_ip: Mapped[str] = mapped_column(String(64), nullable=False)
+    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_enrollment_attempt_failures_site_attempted", "site_id", "attempted_at"),
+        Index(
+            "ix_enrollment_attempt_failures_site_client_attempted",
+            "site_id",
+            "client_ip",
+            "attempted_at",
+        ),
+    )
+
+
+class AdminAuditEvent(Base):
+    """Append-only record of an operator change, written in the same
+    transaction as the change. before/after never contain secrets or hashes."""
+
+    __tablename__ = "admin_audit_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    # "flag" (--actor given) or "os_user" (defaulted via getpass.getuser()).
+    actor_source: Mapped[str] = mapped_column(String(16), nullable=False)
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    organization_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("organizations.id"), nullable=True
+    )
+    site_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("sites.id"), nullable=True
+    )
+    device_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    before: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    after: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)

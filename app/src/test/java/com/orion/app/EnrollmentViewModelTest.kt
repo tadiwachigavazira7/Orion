@@ -2,6 +2,7 @@ package com.orion.app
 
 import androidx.lifecycle.ViewModelStore
 import com.orion.core.enrollment.*
+import com.orion.data.enrollment.DEVICE_LIMIT_REACHED_MESSAGE
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -67,7 +68,7 @@ class EnrollmentViewModelTest {
     @Test fun `approved enrollment saves credential and allowance and grants access`() {
         val store = FakeEnrollmentStore()
         val model = newViewModel(store)
-        model.enroll("ORG", "SITE", "one-time-authorization")
+        model.enroll("ORG", "SITE", "STORE-ENROLLMENT-CODE")
         assertTrue(model.state.value is DeviceAuthorizationState.Authorized)
         assertEquals(VALID_CREDENTIAL, store.saved?.credential)
         assertNotNull(store.saved?.offlineAuthorization)
@@ -77,15 +78,42 @@ class EnrollmentViewModelTest {
     @Test fun `rejected enrollment does not save or grant access`() {
         val store = FakeEnrollmentStore()
         val model = newViewModel(store, EnrollmentResult.Rejected("unknown organization"))
-        model.enroll("BAD", "SITE", "one-time-authorization")
+        model.enroll("BAD", "SITE", "STORE-ENROLLMENT-CODE")
         assertEquals(DeviceAuthorizationState.EnrollmentRejected("unknown organization"), model.state.value)
         assertNull(store.saved)
         assertFalse(model.accessGate.isAccessGranted())
     }
 
+    @Test fun `store capacity rejection shows the capacity message and the user can retry`() {
+        val store = FakeEnrollmentStore()
+        val verifier = FakeEnrollmentVerifier(onEnroll = { EnrollmentResult.Rejected(DEVICE_LIMIT_REACHED_MESSAGE) })
+        val model = EnrollmentViewModel(
+            store = store,
+            verifier = verifier,
+            deviceIdProvider = FakeDeviceIdProvider(DEVICE_ID),
+            clock = MonotonicClock { 100L },
+            bootIdentity = BootIdentityProvider { 1 }
+        ).also { viewModels.add(it) }
+
+        model.enroll("ORG", "SITE", "STORE-ENROLLMENT-CODE")
+
+        val rejected = model.state.value
+        assertEquals(DeviceAuthorizationState.EnrollmentRejected(DEVICE_LIMIT_REACHED_MESSAGE), rejected)
+        assertNull(store.saved)
+        assertFalse(model.accessGate.isAccessGranted())
+        assertTrue("form stays submittable", canSubmitEnrollment(rejected, "ORG", "SITE", "STORE-ENROLLMENT-CODE"))
+
+        // After the administrator frees or adds a slot, the same code works.
+        verifier.onEnroll = { EnrollmentResult.Approved(VALID_CREDENTIAL, WINDOW) }
+        model.enroll("ORG", "SITE", "STORE-ENROLLMENT-CODE")
+        assertTrue(model.state.value is DeviceAuthorizationState.Authorized)
+        assertEquals(VALID_CREDENTIAL, store.saved?.credential)
+        assertEquals(2, verifier.enrollRequests.size)
+    }
+
     @Test fun `failed enrollment remains blocked`() {
         val model = newViewModel(result = EnrollmentResult.Failure("not configured"))
-        model.enroll("ORG", "SITE", "one-time-authorization")
+        model.enroll("ORG", "SITE", "STORE-ENROLLMENT-CODE")
         assertEquals(DeviceAuthorizationState.EnrollmentFailed("not configured"), model.state.value)
         assertFalse(model.accessGate.isAccessGranted())
     }
@@ -101,7 +129,7 @@ class EnrollmentViewModelTest {
         listOf(null, "", "   ").forEach { id ->
             val store = FakeEnrollmentStore()
             val model = newViewModel(store = store, deviceId = id)
-            model.enroll("ORG", "SITE", "one-time-authorization")
+            model.enroll("ORG", "SITE", "STORE-ENROLLMENT-CODE")
             assertEquals(DeviceAuthorizationState.DeviceIdUnavailable, model.state.value)
             assertNull(store.saved)
             assertFalse(model.accessGate.isAccessGranted())

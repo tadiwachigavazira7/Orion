@@ -29,7 +29,7 @@ sealed interface DeviceAuthorizationState {
     /**
      * Device already enrolled server-side, or an enrollment outcome is unknown /
      * could not be saved. Needs an administrator reset; the user may then enroll
-     * again with a new authorization.
+     * again with the store's enrollment code.
      */
     data class RecoveryRequired(val reason: String) : DeviceAuthorizationState
 

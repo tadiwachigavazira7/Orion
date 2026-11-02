@@ -205,7 +205,7 @@ class DeviceAuthorizationManager(
             if (_state.value != DeviceAuthorizationState.Enrolling) {
                 // Defensive (no current path leaves Enrolling while a request is in flight):
                 // an approval must never be silently dropped, because the server has already
-                // consumed the authorization and activated the device.
+                // activated the device (and it now occupies one of the store's device slots).
                 if (result is EnrollmentResult.Approved) {
                     _state.value = DeviceAuthorizationState.RecoveryRequired("$OUTCOME_UNKNOWN.")
                 }
@@ -359,7 +359,7 @@ class DeviceAuthorizationManager(
             // save again. Say what actually helps; never delete keys/data automatically.
             return DeviceAuthorizationState.RecoveryRequired(SECURE_STORAGE_UNAVAILABLE)
         } catch (e: Exception) {
-            // The server has consumed the authorization and activated the device, but
+            // The server has activated the device (it now occupies a store device slot), but
             // this installation does not hold the credential. Retrying would get 409,
             // so this is an explicit recovery state, not a silent failure.
             return DeviceAuthorizationState.RecoveryRequired(

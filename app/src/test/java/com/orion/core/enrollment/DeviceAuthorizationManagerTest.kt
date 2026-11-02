@@ -142,10 +142,10 @@ class DeviceAuthorizationManagerTest {
         val verifier = FakeEnrollmentVerifier(onEnroll = { EnrollmentResult.Approved(CREDENTIAL, WINDOW_24H) })
         val manager = newManager(store, verifier, device)
 
-        manager.enroll(" ORG ", "SITE", " one-time-auth ")
+        manager.enroll(" ORG ", "SITE", " store-code ")
 
         val request = verifier.enrollRequests.single()
-        assertEquals(EnrollmentRequest("ORG", "SITE", "device-1", "one-time-auth"), request)
+        assertEquals(EnrollmentRequest("ORG", "SITE", "device-1", "store-code"), request)
         assertEquals(DeviceAuthorizationState.Authorized(device.now() + 24 * HOUR), manager.state.value)
         assertTrue(manager.isAccessGranted())
         val saved = store.saved!!

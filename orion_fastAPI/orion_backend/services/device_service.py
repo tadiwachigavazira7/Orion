@@ -8,10 +8,11 @@ services/admin_service.py and have no HTTP route.
 """
 
 import asyncio
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -50,6 +51,26 @@ def offline_window(now: datetime, offline_authorization_hours: int) -> OfflineAu
     )
 
 
+async def lock_device_id(db: AsyncSession, device_id: str) -> None:
+    """Transaction-scoped advisory lock for device_id (released on
+    commit/rollback). Serializes enrollments of the same device_id even when
+    no enrolled_devices row exists yet. hashtext collisions only serialize
+    unrelated devices; they never affect correctness."""
+    await db.execute(select(func.pg_advisory_xact_lock(func.hashtext(device_id))))
+
+
+async def count_active_devices(db: AsyncSession, site_id: uuid.UUID) -> int:
+    """Devices counting against a site's capacity: ACTIVE only (REVOKED and
+    PENDING_ENROLLMENT devices free their slot)."""
+    return (
+        await db.execute(
+            select(func.count())
+            .select_from(EnrolledDevice)
+            .where(EnrolledDevice.site_id == site_id, EnrolledDevice.status == DeviceStatus.ACTIVE)
+        )
+    ).scalar_one()
+
+
 async def find_by_device_id(
     db: AsyncSession, device_id: str, *, for_update: bool = False
 ) -> EnrolledDevice | None:
@@ -62,8 +83,8 @@ async def find_by_device_id(
 
     for_update=True takes a row lock (SELECT ... FOR UPDATE) for the rest of
     the caller's transaction, serializing state transitions on one device
-    (enrollment, revoke, reset, authorization issuance). Verification does
-    not lock; see verify_device.
+    (enrollment, revoke, reset). Verification does not lock; see
+    verify_device.
     """
     statement = (
         select(EnrolledDevice)

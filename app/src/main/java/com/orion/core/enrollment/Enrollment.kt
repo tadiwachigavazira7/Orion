@@ -128,7 +128,10 @@ data class EnrollmentRequest(
     val organizationCode: String,
     val siteCode: String,
     val deviceId: String,
-    /** One-time, operator-issued enrollment authorization secret. Never log. */
+    /**
+     * The store's reusable enrollment code (the "Enrollment auth. code" field), sent as the
+     * contract's `enrollment_authorization`. A secret: never log or display it.
+     */
     val enrollmentAuthorization: String
 ) {
     override fun toString(): String =

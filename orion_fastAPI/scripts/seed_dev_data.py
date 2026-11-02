@@ -1,36 +1,35 @@
 """Idempotently seed a development organization/site for manual testing.
 
 DEVELOPMENT ONLY. Refuses to run (exit code 2) unless ORION_ENVIRONMENT is
-explicitly set to "development" (in the environment or .env). An unset value,
-"test", or "production" is refused before any database connection is made.
+explicitly set to "development". An unset value, "test", or "production" is
+refused before any database connection is made.
 
-Seeds:
+Seeds, through the same services the operator CLI uses (so audit rows are
+written):
   - Organization organization_code="TEST-ORG-001", name="Test Organization"
-  - Site site_code="TEST-SITE-001" under that organization
+  - Site site_code="TEST-SITE-001" with a PILOT subscription (6 included slots)
+  - A freshly generated store enrollment code, printed ONCE - only if the
+    site has no code yet. No code is hardcoded; rerunning never rotates an
+    existing code (use the CLI's rotate-enrollment-code for that).
 
-Does NOT seed an EnrolledDevice row or an enrollment authorization, and
-embeds no secrets. Devices enroll through POST /enrollment with an
-authorization issued by the operator CLI:
-
-    uv run python -m orion_backend.cli issue-enrollment-authorization \\
-        --organization-code TEST-ORG-001 --site-code TEST-SITE-001 --device-id <device-id>
-
-Safe to run repeatedly against a persistent dev database (checks before
-inserting).
+Does NOT seed any EnrolledDevice row.
 
 Usage (from orion_fastAPI/):
     ORION_ENVIRONMENT=development uv run python scripts/seed_dev_data.py
 """
 
 import asyncio
+import getpass
 import sys
 
 from pydantic import ValidationError
-from sqlalchemy import select
 
 from orion_backend.config import Settings, get_settings
 from orion_backend.db.base import build_engine, build_sessionmaker
-from orion_backend.db.models import Organization, Site
+from orion_backend.db.models import SubscriptionStatus
+from orion_backend.services import admin_service, site_resolution
+from orion_backend.services.audit_service import Actor
+from orion_backend.services.credential_hasher import Argon2CredentialHasher
 
 ORGANIZATION_CODE = "TEST-ORG-001"
 ORGANIZATION_NAME = "Test Organization"
@@ -43,50 +42,60 @@ def is_seeding_allowed(settings: Settings) -> bool:
     return settings.orion_environment == "development"
 
 
+def _actor() -> Actor:
+    try:
+        user = getpass.getuser()
+    except Exception:  # no OS user known (e.g. minimal container)
+        user = "unknown"
+    return Actor(name=f"{user} (seed_dev_data)", source="os_user")
+
+
 async def seed(settings: Settings) -> None:
     engine = build_engine(settings.database_url)
     sessionmaker = build_sessionmaker(engine)
+    actor = _actor()
 
     try:
         async with sessionmaker() as db:
-            result = await db.execute(
-                select(Organization).where(Organization.organization_code == ORGANIZATION_CODE)
+            org = await admin_service.create_organization(
+                db, ORGANIZATION_CODE, ORGANIZATION_NAME, actor
             )
-            organization = result.scalar_one_or_none()
-            if organization is None:
-                organization = Organization(
-                    organization_code=ORGANIZATION_CODE, name=ORGANIZATION_NAME
-                )
-                db.add(organization)
-                await db.commit()
-                await db.refresh(organization)
-                print(f"Created organization '{ORGANIZATION_CODE}' ({organization.id})")
-            else:
-                print(f"Organization '{ORGANIZATION_CODE}' already exists ({organization.id})")
+            print(
+                f"Organization '{ORGANIZATION_CODE}' "
+                + ("created" if org.created else "already exists")
+            )
 
-            result = await db.execute(
-                select(Site).where(
-                    Site.organization_id == organization.id,
-                    Site.site_code == SITE_CODE,
+            organization = await site_resolution.resolve_organization(db, ORGANIZATION_CODE)
+            if await site_resolution.find_site(db, organization, SITE_CODE) is None:
+                await admin_service.create_site(
+                    db, ORGANIZATION_CODE, SITE_CODE, actor, SubscriptionStatus.PILOT
                 )
-            )
-            site = result.scalar_one_or_none()
-            if site is None:
-                site = Site(site_code=SITE_CODE, organization_id=organization.id)
-                db.add(site)
-                await db.commit()
-                await db.refresh(site)
-                print(f"Created site '{SITE_CODE}' ({site.id}) under '{ORGANIZATION_CODE}'")
+                print(f"Site '{SITE_CODE}' created with a PILOT subscription (6 included slots)")
             else:
-                print(f"Site '{SITE_CODE}' already exists ({site.id}) under '{ORGANIZATION_CODE}'")
+                print(f"Site '{SITE_CODE}' already exists")
+
+            info = await admin_service.inspect_site(db, ORGANIZATION_CODE, SITE_CODE)
+            await db.rollback()
+            print(
+                f"Subscription: {info.subscription.status.value}, "
+                f"{info.subscription.total_authorized_slots} slots, "
+                f"{info.active_devices} active device(s)"
+            )
+
+            if info.has_enrollment_code:
+                print(
+                    "Site already has a store enrollment code (not shown again). To get a new one:\n"
+                    "  uv run python -m orion_backend.cli rotate-enrollment-code "
+                    f"--organization-code {ORGANIZATION_CODE} --site-code {SITE_CODE}"
+                )
+            else:
+                rotated = await admin_service.rotate_enrollment_code(
+                    db, Argon2CredentialHasher(), ORGANIZATION_CODE, SITE_CODE, actor
+                )
+                print("Development store enrollment code (shown once, not stored readably):")
+                print(f"  enrollment_code: {rotated.code}")
     finally:
         await engine.dispose()
-
-    print(
-        "Next: issue an enrollment authorization with\n"
-        "  uv run python -m orion_backend.cli issue-enrollment-authorization "
-        f"--organization-code {ORGANIZATION_CODE} --site-code {SITE_CODE} --device-id <device-id>"
-    )
 
 
 def main() -> int:

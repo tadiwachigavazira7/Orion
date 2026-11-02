@@ -48,10 +48,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def handle_device_error(request: Request, exc: OrionDeviceError) -> JSONResponse:
         # Never log exc.message here beyond what OrionDeviceError already
         # exposes — subclasses only ever describe device_id/status/codes,
-        # never a credential, an authorization secret, or a hash of either.
+        # never a credential, a store enrollment code, or a hash of either.
         return JSONResponse(
             status_code=exc.http_status,
             content={"detail": exc.message, "error_code": exc.error_code},
+            headers=exc.headers,
         )
 
     @app.exception_handler(RequestValidationError)
@@ -59,7 +60,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
         # FastAPI's default 422 body echoes the submitted input, which here
-        # can be an enrollment authorization or a device credential. Report
+        # can be a store enrollment code or a device credential. Report
         # only which fields failed, never their values.
         fields = [
             ".".join(str(part) for part in error.get("loc", ())) for error in exc.errors()
