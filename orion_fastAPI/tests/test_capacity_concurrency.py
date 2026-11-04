@@ -12,8 +12,14 @@ from orion_backend.api import admin as admin_module
 from orion_backend.services import capacity
 from orion_backend.config import Settings
 from orion_backend.db.models import DeviceStatus, EnrolledDevice
-from tests.helpers import DEFAULT_ORGANIZATION_CODE, DEFAULT_SITE_CODE, create_organization_and_site, enroll
+from tests import helpers
+from tests.helpers import DEFAULT_ORGANIZATION_CODE, DEFAULT_SITE_CODE, enroll
 
+
+
+async def create_organization_and_site(db, *a, **kw):
+    # Sites here are verified by _FastHasher, so their code hash must match its format.
+    return await helpers.create_organization_and_site(db, *a, hash_fn=lambda c: "h:" + c, **kw)
 
 
 class _FastHasher:

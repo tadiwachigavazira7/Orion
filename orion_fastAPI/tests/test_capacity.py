@@ -50,6 +50,9 @@ async def test_admin_raise_allows_more(client: AsyncClient, db_session: AsyncSes
         "extra_device_slots": 2,
         "capacity": 8,
         "active_devices": 6,
+        "included_device_slots": 6,
+        "max_devices": 8,
+        "available_slots": 2,
     }
     assert (await enroll(client, device_id="D-7")).status_code == 201
 
@@ -90,3 +93,30 @@ async def test_other_site_unaffected(client: AsyncClient, db_session: AsyncSessi
     await create_organization_and_site(db_session, "ORG-2", "SITE-2")
     await fill(client, 6)
     assert (await enroll(client, "X-1", "ORG-2", "SITE-2")).status_code == 201
+
+
+async def test_admin_included_slots_change_and_audit(
+    client: AsyncClient, db_session: AsyncSession, admin_key
+):
+    await create_organization_and_site(db_session)
+    await fill(client, 3)
+    r = await client.put(
+        CAP_URL, json={"extra_device_slots": 1, "included_device_slots": 4}, headers={"X-Admin-Key": KEY}
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert (body["max_devices"], body["capacity"], body["available_slots"]) == (5, 5, 2)
+    assert body["included_device_slots"] == 4 and body["included_slots"] == 4
+    # Decrease to exactly the active count is allowed; below it is rejected and changes nothing.
+    ok = await client.put(
+        CAP_URL, json={"extra_device_slots": 0, "included_device_slots": 3}, headers={"X-Admin-Key": KEY}
+    )
+    assert ok.status_code == 200 and ok.json()["max_devices"] == 3
+    bad = await client.put(CAP_URL, json={"extra_device_slots": 0, "included_device_slots": 2}, headers={"X-Admin-Key": KEY})
+    assert bad.status_code == 409 and bad.json()["error_code"] == "capacity_below_active_devices"
+    assert (await enroll(client, device_id="D-9")).status_code == 409
+    from sqlalchemy import select
+    from orion_backend.db.models import AuditEvent
+
+    rows = (await db_session.execute(select(AuditEvent).where(AuditEvent.action == "capacity_changed"))).scalars().all()
+    assert len(rows) == 2 and {r.actor for r in rows} == {"admin-api"}

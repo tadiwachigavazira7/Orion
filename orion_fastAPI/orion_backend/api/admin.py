@@ -7,7 +7,7 @@ from orion_backend.api.deps import get_db
 from orion_backend.config import get_settings
 from orion_backend.errors import AdminApiNotConfiguredError, InvalidAdminKeyError
 from orion_backend.schemas import CapacityResponse, SetCapacityRequest
-from orion_backend.services import admin_service, capacity
+from orion_backend.services import admin_service
 
 
 def require_admin_key(x_admin_key: str | None = Header(default=None)) -> None:
@@ -33,14 +33,19 @@ async def set_capacity(
     body: SetCapacityRequest,
     db: AsyncSession = Depends(get_db),
 ) -> CapacityResponse:
-    site, active = await admin_service.set_extra_device_slots(
-        db, organization_code, site_code, body.extra_device_slots
+    site, active = await admin_service.set_capacity(
+        db, organization_code, site_code, "admin-api",
+        extra_device_slots=body.extra_device_slots,
+        included_device_slots=body.included_device_slots,
     )
     return CapacityResponse(
         organization_code=organization_code,
         site_code=site_code,
-        included_slots=capacity.INCLUDED_DEVICE_SLOTS,
+        included_slots=site.included_device_slots,
         extra_device_slots=site.extra_device_slots,
-        capacity=capacity.capacity_of(site),
+        capacity=site.max_devices,
         active_devices=active,
+        included_device_slots=site.included_device_slots,
+        max_devices=site.max_devices,
+        available_slots=max(site.max_devices - active, 0),
     )

@@ -57,12 +57,18 @@ class EnrollmentViewModel(
         }
     }
 
-    fun enroll(organizationCode: String, siteCode: String) = viewModelScope.launch {
+    fun enroll(organizationCode: String, siteCode: String, enrollmentCode: String) = viewModelScope.launch {
+        val code = enrollmentCode.trim()
+        if (code.isEmpty()) {
+            _state.value = EnrollmentUiState.EnrollmentRejected("Enter the enrollment code provided for your store.")
+            return@launch
+        }
         _state.value = EnrollmentUiState.Enrolling
         val request = EnrollmentRequest(
             organizationCode = organizationCode,
             siteCode = siteCode,
-            deviceId = deviceIdProvider.currentDeviceId()
+            deviceId = deviceIdProvider.currentDeviceId(),
+            enrollmentCode = code
         )
         when (val result = enrollDevice.enroll(request)) {
             is EnrollmentResult.Approved -> _state.value = EnrollmentUiState.Enrolled

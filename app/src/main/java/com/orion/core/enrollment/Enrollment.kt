@@ -35,8 +35,13 @@ data class EnrollmentCredential(
 data class EnrollmentRequest(
     val organizationCode: String,
     val siteCode: String,
-    val deviceId: String
-)
+    val deviceId: String,
+    val enrollmentCode: String   // secret per-store code handed out by an operator; never persist or log
+) {
+    override fun toString(): String =
+        "EnrollmentRequest(organizationCode=$organizationCode, siteCode=$siteCode, " +
+            "deviceId=$deviceId, enrollmentCode=<redacted>)"
+}
 
 /** Outcome of an enrollment verification attempt against the backend. */
 sealed interface EnrollmentResult {

@@ -16,7 +16,8 @@ import org.junit.Test
 private val REQUEST = EnrollmentRequest(
     organizationCode = "TEST-ORG-001",
     siteCode = "TEST-SITE-001",
-    deviceId = "device-1"
+    deviceId = "device-1",
+    enrollmentCode = "secret-code"
 )
 
 /**
@@ -93,6 +94,7 @@ class HttpEnrollmentVerifierTest {
         assertTrue(sentBody.contains("\"organization_code\":\"TEST-ORG-001\""))
         assertTrue(sentBody.contains("\"site_code\":\"TEST-SITE-001\""))
         assertTrue(sentBody.contains("\"device_id\":\"device-1\""))
+        assertTrue(sentBody.contains("\"enrollment_code\":\"secret-code\""))
     }
 
     @Test
@@ -123,6 +125,40 @@ class HttpEnrollmentVerifierTest {
 
         assertTrue(result is EnrollmentResult.Rejected)
         assertEquals("Device 'device-1' is already enrolled.", (result as EnrollmentResult.Rejected).reason)
+    }
+
+    @Test
+    fun `403 invalid_enrollment_code and subscription_not_active map to Rejected with detail`() = runTest {
+        for ((code, detail) in listOf(
+            "invalid_enrollment_code" to "Invalid enrollment code.",
+            "subscription_not_active" to "Subscription is not active."
+        )) {
+            server.enqueue(
+                MockResponse.Builder().code(403)
+                    .body("""{"detail":"$detail","error_code":"$code"}""").build()
+            )
+            val result = verifier.verify(REQUEST)
+            assertTrue(result is EnrollmentResult.Rejected)
+            assertEquals(detail, (result as EnrollmentResult.Rejected).reason)
+        }
+    }
+
+    @Test
+    fun `409 site_capacity_exceeded maps to Rejected`() = runTest {
+        server.enqueue(
+            MockResponse.Builder().code(409)
+                .body("""{"detail":"Site is at device capacity.","error_code":"site_capacity_exceeded"}""").build()
+        )
+
+        val result = verifier.verify(REQUEST)
+
+        assertTrue(result is EnrollmentResult.Rejected)
+        assertEquals("Site is at device capacity.", (result as EnrollmentResult.Rejected).reason)
+    }
+
+    @Test
+    fun `request toString redacts the enrollment code`() {
+        assertTrue(!REQUEST.toString().contains("secret-code"))
     }
 
     @Test

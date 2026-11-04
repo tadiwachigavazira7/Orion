@@ -94,10 +94,10 @@ class CapacityBelowOccupancyError(OrionDeviceError):
     error_code = "capacity_below_active_devices"
     http_status = 409
 
-    def __init__(self, capacity: int, active_devices: int):
+    def __init__(self, max_devices: int, active_devices: int):
         super().__init__(
-            f"Capacity {capacity} is below the {active_devices} currently active devices; "
-            "revoke devices first."
+            f"max_devices {max_devices} would be below the {active_devices} currently active "
+            "devices; revoke devices first."
         )
 
 
@@ -115,3 +115,49 @@ class AdminApiNotConfiguredError(OrionDeviceError):
 
     def __init__(self):
         super().__init__("Admin API is not configured on this server.")
+
+
+class InvalidEnrollmentCodeError(OrionDeviceError):
+    """Wrong code, or the site has no enrollment code provisioned (fail closed).
+    Deliberately indistinguishable to the client."""
+
+    error_code = "invalid_enrollment_code"
+    http_status = 403
+
+    def __init__(self):
+        super().__init__("Invalid enrollment code.")
+
+
+class SubscriptionNotActiveError(OrionDeviceError):
+    """One generic error for every not-entitled case (none/pending/suspended/
+    expired/canceled/period over) so billing detail is not leaked."""
+
+    error_code = "subscription_not_active"
+    http_status = 403
+
+    def __init__(self):
+        super().__init__("This site is not currently authorized to use Orion.")
+
+
+class SubscriptionNotFoundError(OrionDeviceError):
+    error_code = "subscription_not_found"
+    http_status = 404
+
+    def __init__(self, site_code: str):
+        super().__init__(f"Site '{site_code}' has no subscription.")
+
+
+class SubscriptionAlreadyExistsError(OrionDeviceError):
+    error_code = "subscription_already_exists"
+    http_status = 409
+
+    def __init__(self, site_code: str):
+        super().__init__(f"Site '{site_code}' already has a subscription.")
+
+
+class InvalidSubscriptionInputError(OrionDeviceError):
+    error_code = "invalid_subscription_input"
+    http_status = 422
+
+    def __init__(self, message: str):
+        super().__init__(message)

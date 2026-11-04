@@ -18,7 +18,7 @@ from orion_backend.errors import (
     DeviceRevokedError,
     InvalidCredentialError,
 )
-from orion_backend.services import capacity
+from orion_backend.services import audit, capacity, subscription
 from orion_backend.services.credential_hasher import CredentialHasher
 
 
@@ -60,6 +60,9 @@ async def verify_device(
         raise DeviceRevokedError(device_id)
     if not hasher.verify(enrollment_credential, device.credential_hash):
         raise InvalidCredentialError(device_id)
+    # After the credential check so an unauthenticated caller learns nothing about billing.
+    # Devices are never auto-revoked by subscription changes; re-activation restores access.
+    await subscription.require_entitled(db, device.site_id)
 
     device.last_verified_at = datetime.now(UTC)
     await db.commit()
@@ -67,7 +70,9 @@ async def verify_device(
     return device
 
 
-async def revoke_device(db: AsyncSession, device_id: str) -> EnrolledDevice:
+async def revoke_device(
+    db: AsyncSession, device_id: str, actor: str = "device-api"
+) -> EnrolledDevice:
     device = await find_by_device_id(db, device_id)
     if device is None:
         raise DeviceNotFoundError(device_id)
@@ -84,6 +89,7 @@ async def revoke_device(db: AsyncSession, device_id: str) -> EnrolledDevice:
 
     if device.status != DeviceStatus.REVOKED:
         device.status = DeviceStatus.REVOKED
+        audit.record(db, actor, "device_revoked", device.site_id, {"device_id": device_id})
         await db.commit()
         await db.refresh(device)
     return device

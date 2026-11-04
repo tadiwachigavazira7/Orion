@@ -10,7 +10,8 @@ import org.junit.Test
 private val REQUEST = EnrollmentRequest(
     organizationCode = "ORG",
     siteCode = "SITE",
-    deviceId = "device-1"
+    deviceId = "device-1",
+    enrollmentCode = "CODE"
 )
 
 private val CREDENTIAL = EnrollmentCredential(

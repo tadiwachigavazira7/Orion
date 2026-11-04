@@ -65,6 +65,11 @@ async def seed() -> None:
             print(f"Site '{SITE_CODE}' already exists ({site.id}) under '{ORGANIZATION_CODE}'")
 
     await engine.dispose()
+    print(
+        "Note: the site cannot enroll devices until an operator provisions it with scripts/orion_ops.py:\n"
+        "  subscription create / subscription activate / enrollment-code rotate "
+        f"{ORGANIZATION_CODE} {SITE_CODE} --operator NAME"
+    )
 
 
 if __name__ == "__main__":

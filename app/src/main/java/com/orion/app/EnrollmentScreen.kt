@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -24,6 +25,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 
 /**
@@ -35,10 +38,12 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun EnrollmentScreen(
     state: EnrollmentUiState,
-    onEnroll: (organizationCode: String, siteCode: String) -> Unit
+    onEnroll: (organizationCode: String, siteCode: String, enrollmentCode: String) -> Unit
 ) {
     var organizationCode by remember { mutableStateOf("") }
     var siteCode by remember { mutableStateOf("") }
+    // Secret: held only in composition state; leaves composition (and is dropped) once enrolled.
+    var enrollmentCode by remember { mutableStateOf("") }
 
     val deviceId = when (state) {
         is EnrollmentUiState.NeedsEnrollment -> state.deviceId
@@ -82,8 +87,19 @@ fun EnrollmentScreen(
                     enabled = state !is EnrollmentUiState.Enrolling
                 )
 
+                OutlinedTextField(
+                    value = enrollmentCode,
+                    onValueChange = { enrollmentCode = it },
+                    label = { Text("Enrollment code") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    enabled = state !is EnrollmentUiState.Enrolling
+                )
+
                 Button(
-                    onClick = { onEnroll(organizationCode, siteCode) },
+                    onClick = { onEnroll(organizationCode, siteCode, enrollmentCode) },
                     modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
                     enabled = state !is EnrollmentUiState.Enrolling
                 ) {

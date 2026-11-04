@@ -1,8 +1,9 @@
 """Per-site device capacity and the locking convention that protects it.
 
 LOCKING CONVENTION: every capacity-changing operation (enroll, revoke, admin
-capacity change) first takes `SELECT ... FOR UPDATE` on the SITE row via
-lock_site(), BEFORE reading/counting/writing any device rows. Exactly one lock
+capacity change, subscription change, enrollment-code rotation) first takes `SELECT ... FOR UPDATE` on the SITE row via
+lock_site(), BEFORE reading/counting/writing any device rows. Capacity is Site.max_devices (generated column; the only source of truth).
+Exactly one lock
 per transaction and always the site row, so there is no lock-order deadlock.
 The lock is released by commit/rollback (get_db's session close rolls back).
 """
@@ -14,15 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from orion_backend.db.models import DeviceStatus, EnrolledDevice, Site
 
-INCLUDED_DEVICE_SLOTS = 6
-
-
-def capacity_of(site: Site) -> int:
-    return INCLUDED_DEVICE_SLOTS + site.extra_device_slots
-
-
 async def lock_site(db: AsyncSession, site_id: uuid.UUID) -> Site:
-    # populate_existing so extra_device_slots is re-read after waiting on the lock.
+    # populate_existing so slots/max_devices are re-read after waiting on the lock.
     result = await db.execute(
         select(Site).where(Site.id == site_id).with_for_update().execution_options(populate_existing=True)
     )

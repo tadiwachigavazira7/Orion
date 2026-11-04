@@ -16,12 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from orion_backend.db.models import DeviceStatus, EnrolledDevice, Organization, Site
 from orion_backend.errors import (
     DeviceAlreadyEnrolledError,
+    InvalidEnrollmentCodeError,
+    OrionDeviceError,
     OrganizationNotFoundError,
     SiteCapacityExceededError,
     SiteNotFoundError,
     SiteOrganizationMismatchError,
 )
-from orion_backend.services import capacity, device_service
+from orion_backend.services import audit, capacity, device_service, subscription
 from orion_backend.services.credential_hasher import CredentialHasher
 
 # Credential length in bytes of entropy before URL-safe base64 encoding.
@@ -60,28 +62,65 @@ async def _resolve_site(db: AsyncSession, organization: Organization, site_code:
     raise SiteNotFoundError(site_code)
 
 
+def _verify_enrollment_code(hasher: CredentialHasher, site: Site, enrollment_code: str) -> None:
+    if site.enrollment_code_hash is None:
+        # Not provisioned: fail closed. Spend one hash so timing resembles a real mismatch.
+        hasher.hash(enrollment_code)
+        raise InvalidEnrollmentCodeError()
+    if not hasher.verify(enrollment_code, site.enrollment_code_hash):
+        raise InvalidEnrollmentCodeError()
+
+
 async def enroll_device_at_site(
     db: AsyncSession,
     hasher: CredentialHasher,
     organization_code: str,
     site_code: str,
     device_id: str,
+    enrollment_code: str,
 ) -> tuple[EnrolledDevice, Organization, Site, str]:
     organization = await _resolve_organization(db, organization_code)
     site = await _resolve_site(db, organization, site_code)
+    site_id = site.id  # read now: the session may roll back (expiring attributes) on failure
+    try:
+        return await _enroll(db, hasher, organization, site, device_id, enrollment_code)
+    except OrionDeviceError as exc:
+        # Never log the enrollment code or any credential.
+        audit.logger.info(
+            "enrollment rejected site_id=%s device_id=%s reason=%s", site_id, device_id, exc.error_code
+        )
+        raise
+
+
+async def _enroll(
+    db: AsyncSession,
+    hasher: CredentialHasher,
+    organization: Organization,
+    site: Site,
+    device_id: str,
+    enrollment_code: str,
+) -> tuple[EnrolledDevice, Organization, Site, str]:
+    # Code check first: reveals no subscription/capacity info to a caller without the code.
+    _verify_enrollment_code(hasher, site, enrollment_code)
 
     plaintext_credential = secrets.token_urlsafe(_CREDENTIAL_BYTES)
     credential_hash = hasher.hash(plaintext_credential)  # CPU-heavy: done before taking the lock
 
+    verified_hash = site.enrollment_code_hash
     site = await capacity.lock_site(db, site.id)
+    # Rotated while we waited for the lock? Then the code we verified is stale (no re-hash under the lock).
+    if site.enrollment_code_hash != verified_hash:
+        raise InvalidEnrollmentCodeError()
+    # Entitlement is read AFTER the lock so suspend/enroll cannot interleave.
+    await subscription.require_entitled(db, site.id)
     existing = await device_service.find_by_device_id(db, device_id)
     if existing is not None:
         # Enrollment never silently overwrites an existing record, ACTIVE or
         # REVOKED - re-enrolling a revoked device is a separate, deliberate
         # decision this endpoint does not make on its own.
         raise DeviceAlreadyEnrolledError(device_id)
-    if await capacity.count_active(db, site.id) >= capacity.capacity_of(site):
-        raise SiteCapacityExceededError(capacity.capacity_of(site))
+    if await capacity.count_active(db, site.id) >= site.max_devices:
+        raise SiteCapacityExceededError(site.max_devices)
 
     device = EnrolledDevice(
         device_id=device_id,
@@ -90,6 +129,7 @@ async def enroll_device_at_site(
         status=DeviceStatus.ACTIVE,
     )
     db.add(device)
+    audit.record(db, f"device:{device_id}", "device_enrolled", site.id, {"device_id": device_id})
     try:
         await db.commit()
     except IntegrityError:

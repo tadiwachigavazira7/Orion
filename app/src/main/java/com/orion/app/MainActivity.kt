@@ -108,7 +108,7 @@ class MainActivity : ComponentActivity() {
                         is EnrollmentUiState.EnrollmentFailed ->
                             EnrollmentScreen(
                                 state = enrollmentState,
-                                onEnroll = { orgCode, siteCode -> viewModel.enroll(orgCode, siteCode) }
+                                onEnroll = { orgCode, siteCode, code -> viewModel.enroll(orgCode, siteCode, code) }
                             )
                         is EnrollmentUiState.Enrolled -> FindScreen()
                     }

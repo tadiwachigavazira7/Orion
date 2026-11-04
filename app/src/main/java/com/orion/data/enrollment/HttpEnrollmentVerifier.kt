@@ -36,6 +36,7 @@ private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
  * FastAPI enrollment service's route handler/error mapping.
  */
 private const val HTTP_ENROLLED = 201
+private const val HTTP_FORBIDDEN = 403
 private const val HTTP_NOT_FOUND = 404
 private const val HTTP_CONFLICT = 409
 
@@ -61,6 +62,7 @@ class HttpEnrollmentVerifier(
                     .put("organization_code", request.organizationCode)
                     .put("site_code", request.siteCode)
                     .put("device_id", request.deviceId)
+                    .put("enrollment_code", request.enrollmentCode)
                     .toString()
                     .toRequestBody(JSON_MEDIA_TYPE)
 
@@ -73,7 +75,7 @@ class HttpEnrollmentVerifier(
                     val bodyString = response.body?.string().orEmpty()
                     when (response.code) {
                         HTTP_ENROLLED -> approvedFrom(bodyString)
-                        HTTP_NOT_FOUND, HTTP_CONFLICT ->
+                        HTTP_FORBIDDEN, HTTP_NOT_FOUND, HTTP_CONFLICT ->
                             EnrollmentResult.Rejected(
                                 extractDetail(bodyString)
                                     ?: "Enrollment was rejected (HTTP ${response.code})."

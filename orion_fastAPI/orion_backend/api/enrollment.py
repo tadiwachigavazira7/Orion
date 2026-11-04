@@ -20,7 +20,7 @@ async def enroll(
     hasher: CredentialHasher = Depends(get_credential_hasher),
 ) -> EnrollmentResponse:
     device, organization, site, credential = await enrollment_service.enroll_device_at_site(
-        db, hasher, body.organization_code, body.site_code, body.device_id
+        db, hasher, body.organization_code, body.site_code, body.device_id, body.enrollment_code
     )
     return EnrollmentResponse(
         device_id=device.device_id,

@@ -93,7 +93,7 @@ class EnrollmentViewModelTest {
             verifierResult = EnrollmentResult.Approved(VALID_CREDENTIAL)
         )
 
-        viewModel.enroll("ORG", "SITE")
+        viewModel.enroll("ORG", "SITE", " CODE ")
 
         assertTrue(viewModel.state.value is EnrollmentUiState.Enrolled)
         assertEquals(VALID_CREDENTIAL, store.saved)
@@ -106,7 +106,7 @@ class EnrollmentViewModelTest {
             verifierResult = EnrollmentResult.Rejected("unknown organization")
         )
 
-        viewModel.enroll("BAD", "SITE")
+        viewModel.enroll("BAD", "SITE", " CODE ")
 
         val state = viewModel.state.value
         assertTrue(state is EnrollmentUiState.EnrollmentRejected)
@@ -121,11 +121,39 @@ class EnrollmentViewModelTest {
             verifierResult = EnrollmentResult.Failure("not configured")
         )
 
-        viewModel.enroll("ORG", "SITE")
+        viewModel.enroll("ORG", "SITE", " CODE ")
 
         val state = viewModel.state.value
         assertTrue(state is EnrollmentUiState.EnrollmentFailed)
         assertEquals("not configured", (state as EnrollmentUiState.EnrollmentFailed).reason)
+    }
+
+    @Test
+    fun `enroll with a blank code is blocked before reaching the verifier or store`() {
+        val (viewModel, store) = newViewModel(store = FakeEnrollmentStore(null))
+
+        viewModel.enroll("ORG", "SITE", "   ")
+
+        assertTrue(viewModel.state.value is EnrollmentUiState.EnrollmentRejected)
+        assertEquals(null, store.saved)
+    }
+
+    @Test
+    fun `enrollment code is trimmed, sent to the verifier, and not stored in the credential or state`() {
+        val store = FakeEnrollmentStore(null)
+        val verifier = FakeEnrollmentVerifier(EnrollmentResult.Approved(VALID_CREDENTIAL))
+        val viewModel = EnrollmentViewModel(
+            CheckEnrollmentUseCase(store, now = { 100L }),
+            EnrollDeviceUseCase(verifier, store),
+            UnenrollDeviceUseCase(store),
+            FakeDeviceIdProvider(DEVICE_ID)
+        )
+
+        viewModel.enroll("ORG", "SITE", " CODE ")
+
+        assertEquals("CODE", verifier.lastRequest?.enrollmentCode)
+        assertTrue(viewModel.state.value is EnrollmentUiState.Enrolled)
+        assertTrue(!store.saved.toString().contains("CODE"))
     }
 
     @Test

@@ -9,6 +9,7 @@ class EnrollmentRequest(BaseModel):
     organization_code: str = Field(min_length=1, max_length=128)
     site_code: str = Field(min_length=1, max_length=128)
     device_id: str = Field(min_length=1, max_length=128)
+    enrollment_code: str = Field(min_length=1, max_length=128)
 
 
 class EnrollmentResponse(BaseModel):
@@ -41,6 +42,7 @@ class DeviceStatusResponse(BaseModel):
 
 class SetCapacityRequest(BaseModel):
     extra_device_slots: int = Field(ge=0)
+    included_device_slots: int | None = Field(default=None, ge=0)
 
 
 class CapacityResponse(BaseModel):
@@ -50,6 +52,10 @@ class CapacityResponse(BaseModel):
     extra_device_slots: int
     capacity: int
     active_devices: int
+    # Additive fields
+    included_device_slots: int
+    max_devices: int
+    available_slots: int
 
 
 class ErrorResponse(BaseModel):
