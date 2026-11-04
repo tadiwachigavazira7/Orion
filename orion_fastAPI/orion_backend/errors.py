@@ -80,3 +80,38 @@ class SiteOrganizationMismatchError(OrionDeviceError):
         super().__init__(
             f"Site '{site_code}' does not belong to organization '{organization_code}'."
         )
+
+
+class SiteCapacityExceededError(OrionDeviceError):
+    error_code = "site_capacity_exceeded"
+    http_status = 409
+
+    def __init__(self, capacity: int):
+        super().__init__(f"Site is at its device capacity of {capacity}.")
+
+
+class CapacityBelowOccupancyError(OrionDeviceError):
+    error_code = "capacity_below_active_devices"
+    http_status = 409
+
+    def __init__(self, capacity: int, active_devices: int):
+        super().__init__(
+            f"Capacity {capacity} is below the {active_devices} currently active devices; "
+            "revoke devices first."
+        )
+
+
+class InvalidAdminKeyError(OrionDeviceError):
+    error_code = "invalid_admin_key"
+    http_status = 401
+
+    def __init__(self):
+        super().__init__("Missing or invalid admin key.")
+
+
+class AdminApiNotConfiguredError(OrionDeviceError):
+    error_code = "admin_api_not_configured"
+    http_status = 503
+
+    def __init__(self):
+        super().__init__("Admin API is not configured on this server.")

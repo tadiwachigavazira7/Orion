@@ -10,16 +10,18 @@ device-already-enrolled check, and server-side credential generation.
 import secrets
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orion_backend.db.models import DeviceStatus, EnrolledDevice, Organization, Site
 from orion_backend.errors import (
     DeviceAlreadyEnrolledError,
     OrganizationNotFoundError,
+    SiteCapacityExceededError,
     SiteNotFoundError,
     SiteOrganizationMismatchError,
 )
-from orion_backend.services import device_service
+from orion_backend.services import capacity, device_service
 from orion_backend.services.credential_hasher import CredentialHasher
 
 # Credential length in bytes of entropy before URL-safe base64 encoding.
@@ -68,21 +70,31 @@ async def enroll_device_at_site(
     organization = await _resolve_organization(db, organization_code)
     site = await _resolve_site(db, organization, site_code)
 
+    plaintext_credential = secrets.token_urlsafe(_CREDENTIAL_BYTES)
+    credential_hash = hasher.hash(plaintext_credential)  # CPU-heavy: done before taking the lock
+
+    site = await capacity.lock_site(db, site.id)
     existing = await device_service.find_by_device_id(db, device_id)
     if existing is not None:
         # Enrollment never silently overwrites an existing record, ACTIVE or
         # REVOKED - re-enrolling a revoked device is a separate, deliberate
         # decision this endpoint does not make on its own.
         raise DeviceAlreadyEnrolledError(device_id)
+    if await capacity.count_active(db, site.id) >= capacity.capacity_of(site):
+        raise SiteCapacityExceededError(capacity.capacity_of(site))
 
-    plaintext_credential = secrets.token_urlsafe(_CREDENTIAL_BYTES)
     device = EnrolledDevice(
         device_id=device_id,
         site_id=site.id,
-        credential_hash=hasher.hash(plaintext_credential),
+        credential_hash=credential_hash,
         status=DeviceStatus.ACTIVE,
     )
     db.add(device)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Same device_id racing in via a different site (different lock).
+        await db.rollback()
+        raise DeviceAlreadyEnrolledError(device_id) from None
     await db.refresh(device)
     return device, organization, site, plaintext_credential

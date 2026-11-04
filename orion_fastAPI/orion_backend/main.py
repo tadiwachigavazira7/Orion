@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from orion_backend.api.admin import router as admin_router
 from orion_backend.api.devices import router as devices_router
 from orion_backend.api.enrollment import router as enrollment_router
 from orion_backend.config import get_settings
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
 
     app.include_router(devices_router)
     app.include_router(enrollment_router)
+    app.include_router(admin_router)
     return app
 
 

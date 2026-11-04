@@ -18,6 +18,7 @@ from orion_backend.errors import (
     DeviceRevokedError,
     InvalidCredentialError,
 )
+from orion_backend.services import capacity
 from orion_backend.services.credential_hasher import CredentialHasher
 
 
@@ -70,6 +71,16 @@ async def revoke_device(db: AsyncSession, device_id: str) -> EnrolledDevice:
     device = await find_by_device_id(db, device_id)
     if device is None:
         raise DeviceNotFoundError(device_id)
+
+    await capacity.lock_site(db, device.site_id)
+    # Re-read under the lock to see the committed status.
+    result = await db.execute(
+        select(EnrolledDevice)
+        .where(EnrolledDevice.id == device.id)
+        .options(selectinload(EnrolledDevice.site).selectinload(Site.organization))
+        .execution_options(populate_existing=True)
+    )
+    device = result.scalar_one()
 
     if device.status != DeviceStatus.REVOKED:
         device.status = DeviceStatus.REVOKED

@@ -39,6 +39,19 @@ class DeviceStatusResponse(BaseModel):
     last_verified_at: datetime | None
 
 
+class SetCapacityRequest(BaseModel):
+    extra_device_slots: int = Field(ge=0)
+
+
+class CapacityResponse(BaseModel):
+    organization_code: str
+    site_code: str
+    included_slots: int
+    extra_device_slots: int
+    capacity: int
+    active_devices: int
+
+
 class ErrorResponse(BaseModel):
     detail: str
     error_code: str

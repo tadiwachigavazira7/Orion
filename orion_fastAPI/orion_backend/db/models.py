@@ -2,7 +2,16 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum as SAEnum, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Enum as SAEnum,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -84,6 +93,9 @@ class Site(Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
     )
+    extra_device_slots: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -95,4 +107,5 @@ class Site(Base):
 
     __table_args__ = (
         UniqueConstraint("organization_id", "site_code", name="uq_sites_organization_id_site_code"),
+        CheckConstraint("extra_device_slots >= 0", name="ck_sites_extra_device_slots_nonneg"),
     )

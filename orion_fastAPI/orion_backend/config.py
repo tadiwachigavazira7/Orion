@@ -13,6 +13,8 @@ class Settings(BaseSettings):
 
     database_url: str
     cors_origins: str = ""
+    # Unset => the admin API is disabled (503), never open.
+    admin_api_key: str | None = None
 
     @property
     def cors_origin_list(self) -> list[str]:
