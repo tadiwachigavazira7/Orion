@@ -68,3 +68,47 @@ async def client(
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+
+class FastHasher:
+    """Argon2 blocks the event loop and serializes requests, hiding races."""
+
+    def hash(self, credential: str) -> str:
+        return "h:" + credential
+
+    def verify(self, credential: str, credential_hash: str) -> bool:
+        return credential_hash == "h:" + credential
+
+
+@pytest_asyncio.fixture
+async def race_decisions(client: AsyncClient, sessionmaker_, monkeypatch) -> list[float]:
+    """Sets up a real race (fast hasher, pre-warmed pool, widened window after the
+    admission check). Returns the monotonic times at which enrollments finished
+    their admission check; sites must be created with hash_fn=lambda c: "h:" + c."""
+    import asyncio
+    import time
+
+    from sqlalchemy import text
+
+    from orion_backend.api.deps import get_credential_hasher
+    from orion_backend.services import capacity
+
+    client._transport.app.dependency_overrides[get_credential_hasher] = lambda: FastHasher()
+
+    async def hold():
+        async with sessionmaker_() as s:
+            await s.execute(text("select pg_sleep(0.3)"))
+
+    await asyncio.gather(*(hold() for _ in range(12)))
+
+    decisions: list[float] = []
+    real = capacity.count_active
+
+    async def slow_count(db, site_id):
+        n = await real(db, site_id)
+        decisions.append(time.monotonic())
+        await asyncio.sleep(0.2)
+        return n
+
+    monkeypatch.setattr(capacity, "count_active", slow_count)
+    return decisions

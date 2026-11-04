@@ -5,6 +5,9 @@ from pydantic import BaseModel, Field
 from orion_backend.db.models import DeviceStatus
 
 
+MAX_DEVICE_SLOTS = 10000  # sanity cap; also keeps values far from the DB integer limit
+
+
 class EnrollmentRequest(BaseModel):
     organization_code: str = Field(min_length=1, max_length=128)
     site_code: str = Field(min_length=1, max_length=128)
@@ -41,8 +44,8 @@ class DeviceStatusResponse(BaseModel):
 
 
 class SetCapacityRequest(BaseModel):
-    extra_device_slots: int = Field(ge=0)
-    included_device_slots: int | None = Field(default=None, ge=0)
+    extra_device_slots: int = Field(ge=0, le=MAX_DEVICE_SLOTS)
+    included_device_slots: int | None = Field(default=None, ge=0, le=MAX_DEVICE_SLOTS)
 
 
 class CapacityResponse(BaseModel):

@@ -87,7 +87,7 @@ async def enroll_device_at_site(
     except OrionDeviceError as exc:
         # Never log the enrollment code or any credential.
         audit.logger.info(
-            "enrollment rejected site_id=%s device_id=%s reason=%s", site_id, device_id, exc.error_code
+            "enrollment rejected site_id=%s device_id=%r reason=%s", site_id, device_id, exc.error_code
         )
         raise
 

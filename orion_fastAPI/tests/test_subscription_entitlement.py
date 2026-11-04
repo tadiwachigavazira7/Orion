@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -238,25 +239,38 @@ async def test_subscription_service_errors_and_audit(db_session: AsyncSession):
     assert rows[1].details["old"]["status"] == "PENDING" and rows[1].details["new"]["status"] == "ACTIVE"
 
 
-async def test_suspend_vs_enroll_race(client: AsyncClient, db_session: AsyncSession, sessionmaker_):
-    _, site = await create_organization_and_site(db_session)
+async def test_suspend_vs_enroll_race(
+    client: AsyncClient, db_session: AsyncSession, sessionmaker_, race_decisions
+):
+    _, site = await create_organization_and_site(db_session, hash_fn=lambda c: "h:" + c)
+    suspend_committed: list[float] = []
 
     async def suspend():
+        await asyncio.sleep(0.05)  # let the first enrollment take the lock and enter its window
         async with sessionmaker_() as s:
             await subscription_service.set_status(
                 s, ORG, SITE, "tester", SubscriptionStatus.SUSPENDED, SubscriptionPlan.STANDARD
             )
+        suspend_committed.append(time.monotonic())
 
-    results = await asyncio.gather(suspend(), *(enroll(client, f"R-{i}") for i in range(8)))
-    for r in results[1:]:
-        assert r.status_code in (201, 403)
-    # Once the suspend has committed (gather finished) no later enrollment may succeed.
+    results = await asyncio.gather(
+        suspend(), *(enroll(client, f"R-{i}") for i in range(8))
+    )
+    statuses = [r.status_code for r in results[1:]]
+    assert set(statuses) <= {201, 403, 409} and 201 in statuses  # the race was real
+    # No enrollment may finish its admission check after the suspend committed;
+    # without the site lock they all pass it at ~0.2s, after the suspend (~0.05s).
+    assert race_decisions and max(race_decisions) < suspend_committed[0]
     late = await enroll(client, "LATE")
     assert late.status_code == 403 and late.json()["error_code"] == "subscription_not_active"
-    active = (
-        await db_session.execute(
-            select(func.count()).select_from(EnrolledDevice).where(EnrolledDevice.status == DeviceStatus.ACTIVE)
-        )
-    ).scalar_one()
-    await db_session.refresh(site)
-    assert active <= site.max_devices
+    assert await device_rows(db_session) == statuses.count(201)
+
+
+async def test_rejection_log_neutralizes_control_chars_in_device_id(
+    client: AsyncClient, db_session: AsyncSession, caplog
+):
+    await create_organization_and_site(db_session)
+    with caplog.at_level(logging.INFO, logger="orion_backend.audit"):
+        await enroll(client, "A\nenrollment rejected site_id=forged", enrollment_code="wrong")
+    messages = [r.getMessage() for r in caplog.records if r.name == "orion_backend.audit"]
+    assert len(messages) == 1 and "\n" not in messages[0] and "forged" in messages[0]

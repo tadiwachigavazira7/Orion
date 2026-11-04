@@ -120,3 +120,12 @@ async def test_admin_included_slots_change_and_audit(
 
     rows = (await db_session.execute(select(AuditEvent).where(AuditEvent.action == "capacity_changed"))).scalars().all()
     assert len(rows) == 2 and {r.actor for r in rows} == {"admin-api"}
+
+
+async def test_slot_counts_have_an_upper_bound(client: AsyncClient, db_session: AsyncSession, admin_key):
+    await create_organization_and_site(db_session)
+    h = {"X-Admin-Key": KEY}
+    for body in ({"extra_device_slots": 10001}, {"extra_device_slots": 0, "included_device_slots": 2**40}):
+        assert (await client.put(CAP_URL, json=body, headers=h)).status_code == 422
+    ok = await client.put(CAP_URL, json={"extra_device_slots": 10000}, headers=h)
+    assert ok.status_code == 200 and ok.json()["max_devices"] == 10006

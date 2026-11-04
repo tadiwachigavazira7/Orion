@@ -29,6 +29,7 @@ from orion_backend.config import get_settings
 from orion_backend.db.base import build_engine, build_sessionmaker
 from orion_backend.db.models import AuditEvent, SubscriptionPlan, SubscriptionStatus
 from orion_backend.errors import OrionDeviceError
+from orion_backend.schemas import MAX_DEVICE_SLOTS
 from orion_backend.services import admin_service, subscription_service
 from orion_backend.services.credential_hasher import Argon2CredentialHasher, CredentialHasher
 
@@ -104,6 +105,10 @@ def parse(argv: list[str]) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if (args.group, args.command) == ("capacity", "set") and args.extra is None and args.included is None:
         parser.error("capacity set needs --extra and/or --included")
+    if (args.group, args.command) == ("capacity", "set"):
+        for v in (args.extra, args.included):
+            if v is not None and not 0 <= v <= MAX_DEVICE_SLOTS:
+                parser.error(f"slot counts must be between 0 and {MAX_DEVICE_SLOTS}")
     return args
 
 
