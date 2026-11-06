@@ -6,6 +6,7 @@
 // ============================================================
 package com.orion.core.session
 
+import com.orion.core.navigation.NavigationEngine
 import com.orion.core.navigation.NavigationState
 import com.orion.core.navigation.Trend
 import com.orion.core.rfid.RfidObservation
@@ -108,9 +109,12 @@ class FindTagUseCaseTest {
         val job: Job = launch { useCase.interpret(TARGET_EPC).collect { states += it } }
         runCurrent()
 
-        // Strong enough to cross NavigationEngine's default acquisition threshold (-35.0).
-        reader.feed.tryEmit(obs(-20.0))
-        runCurrent()
+        // Acquisition now requires a sustained run of strong reads (not one crossing of the
+        // default -35.0 threshold), so feed the engine's default consecutive-read count.
+        repeat(NavigationEngine.DEFAULT_ACQUIRE_CONSECUTIVE_READS) {
+            reader.feed.tryEmit(obs(-20.0))
+            runCurrent()
+        }
         assertTrue("expected TargetAcquired before going silent", states.last().targetAcquired)
 
         advanceTimeBy(SIGNAL_TIMEOUT_MS + 1_500)

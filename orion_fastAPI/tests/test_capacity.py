@@ -2,8 +2,9 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orion_backend.api import admin as admin_module
+from orion_backend.api import deps as admin_module
 from orion_backend.config import Settings
+from tests.helpers import ADMIN
 from tests.helpers import DEFAULT_ORGANIZATION_CODE, DEFAULT_SITE_CODE, create_organization_and_site, enroll
 
 CAP_URL = f"/organizations/{DEFAULT_ORGANIZATION_CODE}/sites/{DEFAULT_SITE_CODE}/capacity"
@@ -28,13 +29,13 @@ async def test_seventh_device_rejected(client: AsyncClient, db_session: AsyncSes
     r = await enroll(client, device_id="D-7")
     assert r.status_code == 409
     assert r.json()["error_code"] == "site_capacity_exceeded"
-    assert (await client.get("/enrolled_devices/D-7")).status_code == 404
+    assert (await client.get("/enrolled_devices/D-7", headers=ADMIN)).status_code == 404
 
 
 async def test_revoked_frees_slot(client: AsyncClient, db_session: AsyncSession):
     await create_organization_and_site(db_session)
     await fill(client, 6)
-    await client.delete("/enrolled_devices/D-0")
+    await client.delete("/enrolled_devices/D-0", headers=ADMIN)
     assert (await enroll(client, device_id="D-7")).status_code == 201
 
 

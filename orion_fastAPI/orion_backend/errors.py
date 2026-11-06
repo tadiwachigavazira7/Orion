@@ -161,3 +161,15 @@ class InvalidSubscriptionInputError(OrionDeviceError):
 
     def __init__(self, message: str):
         super().__init__(message)
+
+
+class DeviceSiteMismatchError(OrionDeviceError):
+    """Operator named a device under the wrong organization/site; nothing was changed."""
+
+    error_code = "device_site_mismatch"
+    http_status = 409
+
+    def __init__(self, device_id: str, organization_code: str, site_code: str):
+        super().__init__(
+            f"Device '{device_id}' does not belong to site '{site_code}' of organization '{organization_code}'."
+        )

@@ -10,7 +10,11 @@ import com.orion.core.inventory.FindInput
 import com.orion.core.inventory.ResolveResult
 import com.orion.core.inventory.ResolveTargetUseCase
 import com.orion.core.session.FindTagUseCase
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,13 +33,25 @@ sealed interface FindUiState {
 
 class FindFlowViewModel(
     private val resolveTarget: ResolveTargetUseCase,
-    private val findTag: FindTagUseCase
+    private val findTag: FindTagUseCase,
+    /** Outlives viewModelScope (cancelled before onCleared returns) so the final reader release can still run. */
+    private val releaseScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<FindUiState>(FindUiState.Idle)
     val state: StateFlow<FindUiState> = _state.asStateFlow()
 
-    fun onResolutionScreenOpened() = viewModelScope.launch { findTag.warmUp() }
+    /**
+     * Reader ownership: FindTagUseCase is the single owner of connect/start/stop/disconnect;
+     * this ViewModel only decides WHEN to ask. Warm-up is idempotent, so navigation never
+     * starts the reader twice. A failed warm-up leaves the reader not-ready and is not shown
+     * here: the user has not asked for anything yet, and find() retries and surfaces the real
+     * error inside the compass Error state if it persists.
+     */
+    fun onResolutionScreenOpened() = viewModelScope.launch {
+        releaseJob?.join()
+        findTag.warmUp()
+    }
 
     /** Scanned or typed EPC → validate → navigate to the single target. */
     fun onFind(input: FindInput) = viewModelScope.launch {
@@ -60,12 +76,62 @@ class FindFlowViewModel(
 
     private var navigationJob: Job? = null
 
+    /** In-flight stop+release; anything that (re)starts the reader waits for it so it cannot tear down a new session. */
+    private var releaseJob: Job? = null
+    private var currentTarget: EpcTarget? = null
+
+    /** Stop navigation, release the reader, return to the entry screen. Also "search another item". */
+    fun onCancel() {
+        stopNavigation(viewModelScope)
+        currentTarget = null
+        _state.value = FindUiState.Idle
+    }
+
+    /** Error-state retry: restart the search for the same target (engine state is reset). */
+    fun onRetry() {
+        currentTarget?.let(::startNavigation)
+    }
+
+    /**
+     * App backgrounded: release the reader so it is never held (or silently resumed) in the
+     * background. Foregrounding does NOT auto-resume; the user retries explicitly (onRetry).
+     */
+    fun onAppStopped() {
+        val navigating = _state.value as? FindUiState.Navigating
+        stopNavigation(viewModelScope)
+        if (navigating != null && navigating.compass !is CompassUiState.Error) {
+            _state.value = navigating.copy(
+                compass = CompassUiState.Error("Search paused because the app was in the background. Retry to resume.")
+            )
+        }
+    }
+
+    override fun onCleared() {
+        stopNavigation(releaseScope)
+    }
+
+    private fun stopNavigation(scope: CoroutineScope) {
+        val nav = navigationJob
+        navigationJob = null
+        nav?.cancel()  // find()'s onCompletion also releases; release() is idempotent
+        val previousRelease = releaseJob
+        // Explicit release also covers a warmed-but-never-navigated reader.
+        releaseJob = scope.launch {
+            previousRelease?.join()
+            nav?.join()
+            findTag.release()
+        }
+    }
+
     /** Reached ONLY with a resolved EPC — the structural gate. */
     private fun startNavigation(target: EpcTarget) {
         val targetName = target.displayName ?: target.epc
-        navigationJob?.cancel()
+        currentTarget = target
+        val previous = navigationJob
         _state.value = FindUiState.Navigating(CompassUiState.Searching, targetName)
         navigationJob = viewModelScope.launch {
+            releaseJob?.join()
+            previous?.cancelAndJoin()  // finish the old session's release before the new one connects
             findTag.find(target.epc)          // ← interpretation pipeline triggers here
                 .catch {
                     // A failure here happens AFTER the compass screen has mounted (reader

@@ -4,9 +4,11 @@
 package com.orion.integrations.fake
 
 import com.orion.core.rfid.RfidObservation
+import com.orion.core.rfid.ReaderStatus
 import com.orion.core.rfid.RfidReader
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
 
 class FakeRfidReader(private val targetEpc: String) : RfidReader {
@@ -18,6 +20,7 @@ class FakeRfidReader(private val targetEpc: String) : RfidReader {
             delay(200)
         }
     }
+    override val status: Flow<ReaderStatus> = MutableStateFlow(ReaderStatus.Connected)
     override suspend fun connect() = Result.success(Unit)
     override suspend fun startInventory() = Result.success(Unit)
     override suspend fun stopInventory() = Result.success(Unit)

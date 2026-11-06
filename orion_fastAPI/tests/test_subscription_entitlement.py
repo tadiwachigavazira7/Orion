@@ -23,6 +23,7 @@ from orion_backend.errors import (
 )
 from orion_backend.services import subscription_service
 from orion_backend.services.subscription import is_entitled
+from tests.helpers import ADMIN
 from tests.helpers import (
     DEFAULT_ORGANIZATION_CODE as ORG,
     DEFAULT_SITE_CODE as SITE,
@@ -119,12 +120,12 @@ async def test_verify_blocked_while_inactive_then_reactivation_restores(
         await set_status(db_session, status)
         r = await client.post("/enrolled_devices/A/verify", json=body)
         assert r.status_code == 403 and r.json()["error_code"] == "subscription_not_active"
-        got = (await client.get("/enrolled_devices/A")).json()
+        got = (await client.get("/enrolled_devices/A", headers=ADMIN)).json()
         assert got["status"] == "ACTIVE" and got["last_verified_at"] is None  # not updated, not revoked
     await set_status(db_session, SubscriptionStatus.ACTIVE)
     r = await client.post("/enrolled_devices/A/verify", json=body)  # same credential, no re-enroll
     assert r.status_code == 200
-    assert (await client.get("/enrolled_devices/A")).json()["last_verified_at"] is not None
+    assert (await client.get("/enrolled_devices/A", headers=ADMIN)).json()["last_verified_at"] is not None
 
 
 async def test_verify_checks_credential_before_revealing_subscription(
@@ -142,7 +143,7 @@ async def test_revoked_device_reports_revoked_even_when_suspended_and_revoke_is_
 ):
     await create_organization_and_site(db_session)
     cred = (await enroll(client, "A")).json()["enrollment_credential"]
-    assert (await client.delete("/enrolled_devices/A")).status_code == 200
+    assert (await client.delete("/enrolled_devices/A", headers=ADMIN)).status_code == 200
     await set_status(db_session, SubscriptionStatus.SUSPENDED)
     r = await client.post("/enrolled_devices/A/verify", json={"enrollment_credential": cred})
     assert r.status_code == 403 and r.json()["error_code"] == "device_revoked"

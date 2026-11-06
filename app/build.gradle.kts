@@ -34,6 +34,8 @@ android {
             val enrollmentBaseUrl =
                 (project.findProperty("ORION_ENROLLMENT_BASE_URL") as String?) ?: "http://10.0.2.2:8000"
             buildConfigField("String", "ENROLLMENT_BASE_URL", "\"$enrollmentBaseUrl\"")
+            // Simulated reader + inventory: debug only. See app/RfidBackendSelection.kt.
+            buildConfigField("String", "RFID_BACKEND", "\"FAKE\"")
         }
         release {
             isMinifyEnabled = false
@@ -46,6 +48,8 @@ android {
             // MainActivity), preserving "honest failure until a real backend is configured"
             // for anything other than debug/emulator builds.
             buildConfigField("String", "ENROLLMENT_BASE_URL", "\"\"")
+            // No real reader adapter exists yet: release never constructs the fakes.
+            buildConfigField("String", "RFID_BACKEND", "\"NONE\"")
         }
     }
 

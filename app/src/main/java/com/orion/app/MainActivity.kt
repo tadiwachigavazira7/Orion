@@ -1,11 +1,16 @@
 package com.orion.app
 
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -14,6 +19,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -23,8 +29,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -110,7 +119,10 @@ class MainActivity : ComponentActivity() {
                                 state = enrollmentState,
                                 onEnroll = { orgCode, siteCode, code -> viewModel.enroll(orgCode, siteCode, code) }
                             )
-                        is EnrollmentUiState.Enrolled -> FindScreen()
+                        is EnrollmentUiState.Enrolled -> when (DdSetup(BuildConfig.RFID_BACKEND, BuildConfig.DEBUG)) {
+                            RfidSetup.Simulated -> FindScreen(lifecycle)
+                            RfidSetup.Unconfigured -> NoRfidReaderScreen()
+                        }
                     }
                 }
             }
@@ -147,40 +159,88 @@ private class FindFlowViewModelFactory(
 private const val DEMO_TARGET_EPC = "30245BFB8386AA80000186A1"
 
 /**
- * Find flow entry point.
+ * Find flow entry point for the SIMULATED setup only (see [selectRfidSetup]): debug builds
+ * wire [FindFlowViewModel] to the hardware-free [FakeRfidReader] / [FakeEpcLookup] pair and
+ * show a persistent "SIMULATED DATA" banner. Release builds never reach this function.
  *
- * Wires [FindFlowViewModel] to the hardware-free [FakeRfidReader] /
- * [FakeEpcLookup] simulation pair (see integrations/fake) so the flow can be
- * exercised end-to-end on an emulator with no RFID hardware and no real
- * inventory backend: [FakeRfidReader] simulates "walking closer" to the
- * target once navigation starts. The associate drives resolution themselves
- * via [EpcEntryScreen] (typed EPC or search-by-name); nothing is auto-resolved.
- *
- * Replace [FakeRfidReader] / [FakeEpcLookup] with real
- * [com.orion.core.rfid.RfidReader] / [com.orion.core.inventory.EpcLookup]
- * implementations once they exist. [FindFlowViewModel], [EpcEntryScreen], and
- * [CompassScreen] do not need to change to support that swap.
+ * Lifecycle: on ON_STOP the reader is released ([FindFlowViewModel.onAppStopped]); on ON_START
+ * nothing resumes by itself - the user retries explicitly from the compass Error state.
  */
 @Composable
-private fun FindScreen() {
+private fun FindScreen(lifecycle: Lifecycle) {
     val factory = remember {
         FindFlowViewModelFactory(
             resolveTarget = ResolveTargetUseCase(FakeEpcLookup()),
-            findTag = FindTagUseCase(FakeRfidReader(DEMO_TARGET_EPC))
+            findTag = FindTagUseCase(
+                FakeRfidReader(DEMO_TARGET_EPC),
+                onTeardownFailure = { Log.w("Orion", "RFID reader teardown failed", it) }
+            )
         )
     }
     val viewModel: FindFlowViewModel = viewModel(factory = factory)
     val state by viewModel.state.collectAsState()
 
-    when (val findState = state) {
-        is FindUiState.Navigating -> CompassScreen(findState.compass, findState.targetName)
-        else -> EpcEntryScreen(
-            state = findState,
-            onResolutionScreenOpened = viewModel::onResolutionScreenOpened,
-            onTypedEpc = { viewModel.onFind(FindInput.TypedEpc(it)) },
-            onSearch = viewModel::onSearch,
-            onEpcChosen = viewModel::onEpcChosen
-        )
+    DisposableEffect(lifecycle, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) viewModel.onAppStopped()
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        SimulatedDataBanner()
+        Box(modifier = Modifier.weight(1f)) {
+            when (val findState = state) {
+                is FindUiState.Navigating -> CompassScreen(
+                    state = findState.compass,
+                    targetName = findState.targetName,
+                    onCancel = viewModel::onCancel,
+                    onRetry = viewModel::onRetry,
+                    onSearchAnother = viewModel::onCancel
+                )
+                else -> EpcEntryScreen(
+                    state = findState,
+                    onResolutionScreenOpened = viewModel::onResolutionScreenOpened,
+                    onTypedEpc = { viewModel.onFind(FindInput.TypedEpc(it)) },
+                    onSearch = viewModel::onSearch,
+                    onEpcChosen = viewModel::onEpcChosen
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SimulatedDataBanner() {
+    Text(
+        text = "SIMULATED DATA",
+        color = Color.White,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth().background(Color(0xFFB00020)).padding(vertical = 4.dp)
+    )
+}
+
+/** Explicit Error state for builds with no real reader adapter (CLAUDE.md section 12). */
+@Composable
+private fun NoRfidReaderScreen() {
+    Scaffold { padding ->
+        Surface(modifier = Modifier.fillMaxSize().padding(padding)) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text("Error", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.error)
+                Text(
+                    "No RFID reader configured for this build",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 12.dp)
+                )
+            }
+        }
     }
 }
 

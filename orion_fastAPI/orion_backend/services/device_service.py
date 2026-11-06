@@ -93,3 +93,34 @@ async def revoke_device(
         await db.commit()
         await db.refresh(device)
     return device
+
+
+async def release_device(db: AsyncSession, device_id: str, actor: str) -> EnrolledDevice:
+    """Delete the device record (ACTIVE or REVOKED) so the PDT can enroll again.
+
+    Frees the slot; never reissues or returns a credential. Returns the detached
+    row (site/organization still loaded) for the response.
+    """
+    device = await find_by_device_id(db, device_id)
+    if device is None:
+        raise DeviceNotFoundError(device_id)
+
+    await capacity.lock_site(db, device.site_id)
+    # Re-read under the lock: a concurrent release may have already removed it.
+    result = await db.execute(
+        select(EnrolledDevice)
+        .where(EnrolledDevice.id == device.id)
+        .options(selectinload(EnrolledDevice.site).selectinload(Site.organization))
+        .execution_options(populate_existing=True)
+    )
+    device = result.scalar_one_or_none()
+    if device is None:
+        raise DeviceNotFoundError(device_id)
+
+    audit.record(
+        db, actor, "device_released", device.site_id,
+        {"device_id": device_id, "previous_status": device.status.value},
+    )
+    await db.delete(device)
+    await db.commit()
+    return device

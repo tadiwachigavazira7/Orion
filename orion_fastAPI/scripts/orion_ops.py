@@ -14,6 +14,9 @@ Usage (from orion_fastAPI/):
     python scripts/orion_ops.py capacity show ORG SITE
     python scripts/orion_ops.py capacity set ORG SITE --operator me --extra 2 [--included 6]
     python scripts/orion_ops.py enrollment-code rotate ORG SITE --operator me   # prints code ONCE
+    python scripts/orion_ops.py device show ORG SITE DEVICE_ID
+    python scripts/orion_ops.py device revoke ORG SITE DEVICE_ID --operator me
+    python scripts/orion_ops.py device release ORG SITE DEVICE_ID --operator me   # PDT can re-enroll; no credential reissued
     python scripts/orion_ops.py audit show --limit 20
 """
 
@@ -28,9 +31,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from orion_backend.config import get_settings
 from orion_backend.db.base import build_engine, build_sessionmaker
 from orion_backend.db.models import AuditEvent, SubscriptionPlan, SubscriptionStatus
-from orion_backend.errors import OrionDeviceError
+from orion_backend.errors import DeviceSiteMismatchError, OrionDeviceError
 from orion_backend.schemas import MAX_DEVICE_SLOTS
-from orion_backend.services import admin_service, subscription_service
+from orion_backend.services import admin_service, device_service, subscription_service
 from orion_backend.services.credential_hasher import Argon2CredentialHasher, CredentialHasher
 
 _STATUS_COMMANDS = {
@@ -59,11 +62,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="orion_ops")
     groups = parser.add_subparsers(dest="group", required=True)
 
-    def leaf(subs, name, write, site=True):
+    def leaf(subs, name, write, site=True, device=False):
         sp = subs.add_parser(name)
         if site:
             sp.add_argument("org_code")
             sp.add_argument("site_code")
+        if device:
+            sp.add_argument("device_id")
         if write:
             sp.add_argument("--operator", required=True, metavar="NAME")
         sp.set_defaults(command=name)
@@ -94,6 +99,11 @@ def build_parser() -> argparse.ArgumentParser:
     code = groups.add_parser("enrollment-code").add_subparsers(dest="action", required=True)
     leaf(code, "rotate", True)
 
+    dev = groups.add_parser("device").add_subparsers(dest="action", required=True)
+    leaf(dev, "show", False, device=True)
+    leaf(dev, "revoke", True, device=True)
+    leaf(dev, "release", True, device=True)
+
     aud = groups.add_parser("audit").add_subparsers(dest="action", required=True)
     a = leaf(aud, "show", False, site=False)
     a.add_argument("--limit", type=int, default=20)
@@ -118,6 +128,21 @@ def _fmt_sub(sub) -> str:
         f"price_cents={sub.monthly_price_cents} "
         f"period_start={sub.current_period_start} period_end={sub.current_period_end}"
     )
+
+
+def _fmt_device(device) -> str:
+    return (
+        f"device_id={device.device_id} org={device.site.organization.organization_code} "
+        f"site={device.site.site_code} status={device.status.value} last_verified_at={device.last_verified_at}"
+    )
+
+
+async def _owned_device(db: AsyncSession, org: str, site_code: str, device_id: str):
+    """Refuse (before any write) unless the device really belongs to ORG/SITE."""
+    device = await device_service.get_device(db, device_id)
+    if device.site.site_code != site_code or device.site.organization.organization_code != org:
+        raise DeviceSiteMismatchError(device_id, org, site_code)
+    return device
 
 
 async def run(args: argparse.Namespace, db: AsyncSession, hasher: CredentialHasher) -> list[str]:
@@ -156,6 +181,14 @@ async def run(args: argparse.Namespace, db: AsyncSession, hasher: CredentialHash
             f"max_devices={site.max_devices} active={active} "
             f"available={max(site.max_devices - active, 0)}"
         ]
+    if args.group == "device":
+        device = await _owned_device(db, org, site_code, args.device_id)
+        if args.command == "show":
+            return [_fmt_device(device)]
+        if args.command == "revoke":
+            return [_fmt_device(await device_service.revoke_device(db, args.device_id, actor))]
+        released = await device_service.release_device(db, args.device_id, actor)
+        return [f"released device_id={released.device_id} (was {released.status.value}); it can enroll again with the site enrollment code"]
     if args.group == "enrollment-code":
         code = await admin_service.rotate_enrollment_code(db, hasher, org, site_code, actor)
         return [f"New enrollment code (shown once, store it securely): {code}"]

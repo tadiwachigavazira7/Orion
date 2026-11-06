@@ -16,6 +16,8 @@ from orion_backend.services.credential_hasher import Argon2CredentialHasher
 DEFAULT_ORGANIZATION_CODE = "TEST-ORG-001"
 DEFAULT_SITE_CODE = "TEST-SITE-001"
 DEFAULT_ENROLLMENT_CODE = "test-enrollment-code"
+ADMIN_KEY = "test-admin-key"
+ADMIN = {"X-Admin-Key": ADMIN_KEY}
 
 
 @lru_cache

@@ -20,10 +20,16 @@
 package com.orion.integrations.zebra
 
 import com.orion.core.rfid.RfidObservation
+import com.orion.core.rfid.ReaderStatus
 import com.orion.core.rfid.RfidReader
 import kotlinx.coroutines.flow.Flow
 
 class ZebraRfidReader : RfidReader {
+    override val status: Flow<ReaderStatus>
+        get() = throw NotImplementedError(
+            "Zebra RFID SDK integration is not implemented — real SDK details are required."
+        )
+
     override val observations: Flow<RfidObservation>
         get() = throw NotImplementedError(
             "Zebra RFID SDK integration is not implemented — real SDK details are required."

@@ -20,10 +20,16 @@
 package com.orion.integrations.impinj
 
 import com.orion.core.rfid.RfidObservation
+import com.orion.core.rfid.ReaderStatus
 import com.orion.core.rfid.RfidReader
 import kotlinx.coroutines.flow.Flow
 
 class ImpinjRfidReader : RfidReader {
+    override val status: Flow<ReaderStatus>
+        get() = throw NotImplementedError(
+            "Impinj RFID SDK integration is not implemented — real SDK details are required."
+        )
+
     override val observations: Flow<RfidObservation>
         get() = throw NotImplementedError(
             "Impinj RFID SDK integration is not implemented — real SDK details are required."

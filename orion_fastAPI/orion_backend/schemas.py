@@ -43,6 +43,13 @@ class DeviceStatusResponse(BaseModel):
     last_verified_at: datetime | None
 
 
+class DeviceReleasedResponse(BaseModel):
+    device_id: str
+    organization_code: str
+    site_code: str
+    previous_status: DeviceStatus
+
+
 class SetCapacityRequest(BaseModel):
     extra_device_slots: int = Field(ge=0, le=MAX_DEVICE_SLOTS)
     included_device_slots: int | None = Field(default=None, ge=0, le=MAX_DEVICE_SLOTS)

@@ -8,11 +8,12 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orion_backend.api.deps import get_credential_hasher
-from orion_backend.api import admin as admin_module
+from orion_backend.api import deps as admin_module
 from orion_backend.services import capacity
 from orion_backend.config import Settings
 from orion_backend.db.models import DeviceStatus, EnrolledDevice
 from tests import helpers
+from tests.helpers import ADMIN
 from tests.helpers import DEFAULT_ORGANIZATION_CODE, DEFAULT_SITE_CODE, enroll
 
 
@@ -111,7 +112,7 @@ async def test_ten_concurrent_distinct_enrollments_one_slot(
     )
     assert v.status_code == 200
     for d, _ in rejected:
-        assert (await client.get(f"/enrolled_devices/{d}")).status_code == 404
+        assert (await client.get(f"/enrolled_devices/{d}", headers=ADMIN)).status_code == 404
 
 
 async def test_same_device_id_concurrently(client: AsyncClient, db_session: AsyncSession):
@@ -139,7 +140,7 @@ async def test_same_device_id_at_two_sites(client: AsyncClient, db_session: Asyn
 async def test_enroll_vs_revoke_at_full_site(client: AsyncClient, db_session: AsyncSession):
     _, site = await create_organization_and_site(db_session)
     await seed_active(db_session, site, 6)
-    enr, rev = await asyncio.gather(enroll(client, "NEW"), client.delete("/enrolled_devices/SEED-0"))
+    enr, rev = await asyncio.gather(enroll(client, "NEW"), client.delete("/enrolled_devices/SEED-0", headers=ADMIN))
     assert rev.status_code == 200
     assert enr.status_code in (201, 409)
     active = await rows(db_session, site, DeviceStatus.ACTIVE)

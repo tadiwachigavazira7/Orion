@@ -30,7 +30,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -57,7 +59,14 @@ private const val GAUGE_START_ANGLE = 135f
 private const val GAUGE_SWEEP_RANGE = 270f
 
 @Composable
-fun CompassScreen(state: CompassUiState, targetName: String, modifier: Modifier = Modifier) {
+fun CompassScreen(
+    state: CompassUiState,
+    targetName: String,
+    onCancel: () -> Unit,
+    onRetry: () -> Unit,
+    onSearchAnother: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     Scaffold(modifier = modifier) { padding ->
         Surface(modifier = Modifier.fillMaxSize().padding(padding)) {
             Column(
@@ -78,6 +87,23 @@ fun CompassScreen(state: CompassUiState, targetName: String, modifier: Modifier 
                     is CompassUiState.Guiding -> GuidingContent(state)
                     is CompassUiState.TargetAcquired -> TargetAcquiredContent(targetName)
                     is CompassUiState.Error -> ErrorContent(state.message)
+                }
+
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(top = 32.dp)
+                ) {
+                    when (state) {
+                        is CompassUiState.Error -> {
+                            Button(onClick = onRetry) { Text("Retry") }
+                            OutlinedButton(onClick = onSearchAnother, modifier = Modifier.padding(top = 8.dp)) {
+                                Text("Search another item")
+                            }
+                        }
+                        is CompassUiState.TargetAcquired ->
+                            Button(onClick = onSearchAnother) { Text("Find another item") }
+                        else -> OutlinedButton(onClick = onCancel) { Text("Cancel search") }
+                    }
                 }
             }
         }
@@ -212,6 +238,11 @@ private fun GuidingContent(state: CompassUiState.Guiding) {
         style = MaterialTheme.typography.headlineSmall,
         modifier = Modifier.padding(top = 20.dp)
     )
+    Text(
+        text = "Relative signal strength (uncalibrated, not distance)",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
     TrendIndicator(state.trend)
     Text(
         text = confidenceLabel(state.confidence),
@@ -257,9 +288,9 @@ private fun TrendIndicator(trend: Trend) {
 }
 
 private fun proximityLabel(proximity: Double): String = when {
-    proximity >= 0.75 -> "Very close"
-    proximity >= 0.35 -> "Getting close"
-    else -> "Far"
+    proximity >= 0.75 -> "Strong signal"
+    proximity >= 0.35 -> "Moderate signal"
+    else -> "Weak signal"
 }
 
 private fun confidenceLabel(confidence: Double): String {

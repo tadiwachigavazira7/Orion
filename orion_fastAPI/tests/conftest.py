@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from orion_backend.db.base import Base, build_engine, build_sessionmaker  # noqa: E402
 from orion_backend.main import create_app  # noqa: E402
+from tests.helpers import ADMIN_KEY  # noqa: E402
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
@@ -58,7 +59,15 @@ async def db_session(
 @pytest_asyncio.fixture
 async def client(
     sessionmaker_: async_sessionmaker[AsyncSession],
+    monkeypatch,
 ) -> AsyncIterator[AsyncClient]:
+    # Admin key configured by default; tests override or clear it to exercise 401/503.
+    from orion_backend.api import deps
+    from orion_backend.config import Settings
+
+    monkeypatch.setattr(
+        deps, "get_settings", lambda: Settings(database_url="x", admin_api_key=ADMIN_KEY)
+    )
     app = create_app()
     # ASGITransport never fires FastAPI's lifespan, so app.state.sessionmaker
     # (normally set up in main.lifespan from DATABASE_URL) is wired directly
